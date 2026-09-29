@@ -1,12 +1,12 @@
 services:
   - type: web
     name: lead-parser
-    env: docker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
     plan: free
     region: frankfurt
-    dockerfilePath: Dockerfile
     envVars:
       - key: PORT
-        value: 8080
+        value: 10000
       - key: HOST
         value: 0.0.0.0
