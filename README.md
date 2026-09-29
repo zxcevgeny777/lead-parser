@@ -2,6 +2,9 @@
 
 Ультимативный комбайн для поиска и квалификации клиентов на разработку, редизайн сайтов и AI-автоматизацию. Специально оптимизирован для рынков **Беларуси (РБ)**, **СНГ** и **международных рынков (США/Европа)**.
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/zxcevgeny777/lead-parser)
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template?template=https://github.com/zxcevgeny777/lead-parser)
+
 ---
 
 ## 💥 Почему старая конверсия 1 к 100 превращается в 1 к 5–10?
