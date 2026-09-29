@@ -59,6 +59,9 @@ class GoogleMapsScraper:
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
+                    "--disable-ipv6",
+                    "--dns-result-order=ipv4first",
+                    "--enable-features=NetworkService,NetworkServiceInProcess",
                     "--lang=en-US,en",
                 ]
             )
@@ -72,7 +75,17 @@ class GoogleMapsScraper:
             await stealth.apply_stealth_async(page)
 
             try:
-                await page.goto(search_url, timeout=35000, wait_until="domcontentloaded")
+                # Retry up to 3 times in case of cold socket initialization
+                for attempt in range(1, 4):
+                    try:
+                        await page.goto(search_url, timeout=35000, wait_until="domcontentloaded")
+                        break
+                    except Exception as ex:
+                        if ("ERR_SOCKET_NOT_CONNECTED" in str(ex) or "ERR_CONNECTION" in str(ex) or "net::" in str(ex)) and attempt < 3:
+                            logger.warning(f"Google Maps attempt {attempt} failed ({ex}). Retrying in 2s...")
+                            await asyncio.sleep(2.0)
+                        else:
+                            raise ex
                 await asyncio.sleep(2.5)
 
                 # 1. Handle Google Cookie / GDPR Consent if shown

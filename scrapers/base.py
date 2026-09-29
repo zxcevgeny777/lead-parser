@@ -48,6 +48,9 @@ class BaseScraper:
             "--ignore-certifcate-errors",
             "--ignore-certifcate-errors-spki-list",
             "--disable-dev-shm-usage",
+            "--disable-ipv6",
+            "--dns-result-order=ipv4first",
+            "--enable-features=NetworkService,NetworkServiceInProcess",
             "--lang=ru-RU,ru",
         ]
 
