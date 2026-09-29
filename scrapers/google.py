@@ -171,7 +171,7 @@ class GoogleMapsScraper:
                         new_in_pass += 1
 
                         # Memory check
-                        if skip_checked and memory_db.is_checked(map_url=place_url, name=name, city=city):
+                        if skip_checked and memory_db.is_checked(url=place_url, name=name, city=city):
                             continue
 
                         raw_text = c.get("raw_text", "")

@@ -76,8 +76,10 @@ class LeadsMemory:
         phone: Optional[str] = None,
         name: Optional[str] = None,
         city: Optional[str] = None,
+        map_url: Optional[str] = None,
     ) -> bool:
         """Checks if a business was already scraped previously."""
+        target_url = url or map_url
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
@@ -86,8 +88,8 @@ class LeadsMemory:
                 if cursor.fetchone():
                     return True
 
-            if url:
-                cursor.execute("SELECT 1 FROM checked_places WHERE map_url = ? OR org_id = ? LIMIT 1", (url, url))
+            if target_url:
+                cursor.execute("SELECT 1 FROM checked_places WHERE map_url = ? OR org_id = ? LIMIT 1", (target_url, target_url))
                 if cursor.fetchone():
                     return True
 
