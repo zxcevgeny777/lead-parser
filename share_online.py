@@ -1,4 +1,4 @@
-"""Launcher for sharing Lead Parser online via secure Cloudflare tunnel."""
+"""Launcher for sharing Lead Parser online via secure tunnel."""
 import os
 import re
 import subprocess
@@ -33,97 +33,68 @@ def copy_to_clipboard(text: str):
         pass
 
 
-def ensure_cloudflared(bin_path: str) -> bool:
-    """Download cloudflared.exe automatically if it doesn't exist."""
-    if os.path.exists(bin_path) and os.path.getsize(bin_path) > 10000000:
-        return True
+def start_tunnelmole(port: int = 8080):
+    """Start Tunnelmole tunnel via npx (no 15-min limit, works with VPN/firewalls)."""
     try:
-        print("  [*] Загрузка модуля Cloudflare Tunnel (~50 МБ, только при первом запуске)...", flush=True)
-        res = subprocess.run(
-            [
-                "curl.exe",
-                "-s",
-                "-L",
-                "-o",
-                bin_path,
-                "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe",
-            ],
-            check=False,
-            timeout=90,
-        )
-        return os.path.exists(bin_path) and os.path.getsize(bin_path) > 10000000
-    except Exception:
-        return False
-
-
-def start_cloudflare_tunnel(port: int = 8080):
-    """Start Cloudflare Tunnel using local cloudflared.exe or PATH."""
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    bin_path = os.path.join(current_dir, "cloudflared.exe")
-    ensure_cloudflared(bin_path)
-    if not os.path.exists(bin_path):
-        bin_path = "cloudflared.exe"
-
-    try:
+        cmd = ["npx.cmd" if sys.platform == "win32" else "npx", "--yes", "tunnelmole", str(port)]
         proc = subprocess.Popen(
-            [bin_path, "tunnel", "--url", f"http://127.0.0.1:{port}"],
+            cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
             errors="ignore",
+            shell=(sys.platform == "win32"),
         )
+        url_holder = []
+        stop_event = threading.Event()
+
+        def reader():
+            for line in iter(proc.stdout.readline, ""):
+                if stop_event.is_set():
+                    break
+                if not line:
+                    break
+                if not url_holder and "tunnelmole.net" in line:
+                    m = re.search(r"https://[a-zA-Z0-9\.\-_]+\.tunnelmole\.net", line)
+                    if m:
+                        url_holder.append(m.group(0))
+
+        t = threading.Thread(target=reader, daemon=True)
+        t.start()
+
+        start_t = time.time()
+        while time.time() - start_t < 12.0:
+            if url_holder:
+                return url_holder[0], proc, "Tunnelmole"
+            if proc.poll() is not None:
+                break
+            time.sleep(0.2)
+
+        stop_event.set()
+        if proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
     except Exception:
-        return None, None
-
-    url_holder = []
-    stop_event = threading.Event()
-
-    def reader(stream):
-        for line in iter(stream.readline, ""):
-            if stop_event.is_set():
-                break
-            if not line:
-                break
-            if not url_holder and "trycloudflare.com" in line:
-                m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", line)
-                if m:
-                    url_holder.append(m.group(0))
-
-    t_err = threading.Thread(target=reader, args=(proc.stderr,), daemon=True)
-    t_out = threading.Thread(target=reader, args=(proc.stdout,), daemon=True)
-    t_err.start()
-    t_out.start()
-
-    # Wait up to 15 seconds for tunnel URL
-    start_t = time.time()
-    while time.time() - start_t < 15.0:
-        if url_holder:
-            return url_holder[0], proc
-        if proc.poll() is not None:
-            break
-        time.sleep(0.2)
-
-    stop_event.set()
-    if proc.poll() is None:
-        try:
-            proc.terminate()
-        except Exception:
-            pass
-    return None, None
+        pass
+    return None, None, None
 
 
 def start_ssh_tunnel(port: int = 8080):
-    """Fallback: localhost.run via SSH."""
+    """Start localhost.run tunnel via OpenSSH (works everywhere)."""
     try:
         cmd = [
             "ssh",
             "-o",
             "StrictHostKeyChecking=no",
             "-o",
-            "ServerAliveInterval=15",
+            "ServerAliveInterval=10",
             "-o",
             "ServerAliveCountMax=3",
+            "-o",
+            "ConnectTimeout=8",
             "-R",
             f"80:127.0.0.1:{port}",
             "nokey@localhost.run",
@@ -137,9 +108,12 @@ def start_ssh_tunnel(port: int = 8080):
             errors="ignore",
         )
         url_holder = []
+        stop_event = threading.Event()
 
         def reader():
             for line in iter(proc.stdout.readline, ""):
+                if stop_event.is_set():
+                    break
                 if not line:
                     break
                 if not url_holder and "lhr.life" in line:
@@ -149,62 +123,98 @@ def start_ssh_tunnel(port: int = 8080):
 
         t = threading.Thread(target=reader, daemon=True)
         t.start()
-        t.join(timeout=8.0)
 
-        if url_holder:
-            return url_holder[0], proc
-        if proc:
-            proc.terminate()
+        start_t = time.time()
+        while time.time() - start_t < 10.0:
+            if url_holder:
+                return url_holder[0], proc, "localhost.run"
+            if proc.poll() is not None:
+                break
+            time.sleep(0.2)
+
+        stop_event.set()
+        if proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
     except Exception:
         pass
-    return None, None
+    return None, None, None
 
 
-def start_tunnel(port: int = 8080):
-    """Start best available tunnel: Cloudflare (primary) -> SSH -> Localtunnel."""
-    # 1. Cloudflare Tunnel (fast, reliable 24/7, never drops out)
-    url, proc = start_cloudflare_tunnel(port=port)
-    if url:
-        return url, proc
+def start_cloudflare_tunnel(port: int = 8080):
+    """Start Cloudflare Tunnel using cloudflared.exe."""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    bin_path = os.path.join(current_dir, "cloudflared.exe")
+    if not os.path.exists(bin_path):
+        return None, None, None
 
-    # 2. SSH localhost.run fallback
-    url, proc = start_ssh_tunnel(port=port)
-    if url:
-        return url, proc
-
-    # 3. Localtunnel fallback
     try:
-        lt_proc = subprocess.Popen(
-            ["npx", "--yes", "localtunnel", "--port", str(port)],
+        proc = subprocess.Popen(
+            [bin_path, "tunnel", "--url", f"http://127.0.0.1:{port}"],
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="ignore",
-            shell=True,
         )
         url_holder = []
+        stop_event = threading.Event()
 
-        def lt_reader():
-            for line in iter(lt_proc.stdout.readline, ""):
+        def reader(stream):
+            for line in iter(stream.readline, ""):
+                if stop_event.is_set():
+                    break
                 if not line:
                     break
-                if "loca.lt" in line:
-                    urls = re.findall(r"https://[a-zA-Z0-9\.\-_]+\.loca\.lt", line)
-                    if urls:
-                        url_holder.append(urls[0])
-                        break
+                if not url_holder and "trycloudflare.com" in line:
+                    m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", line)
+                    if m:
+                        url_holder.append(m.group(0))
 
-        t2 = threading.Thread(target=lt_reader, daemon=True)
-        t2.start()
-        t2.join(timeout=10.0)
+        t_err = threading.Thread(target=reader, args=(proc.stderr,), daemon=True)
+        t_out = threading.Thread(target=reader, args=(proc.stdout,), daemon=True)
+        t_err.start()
+        t_out.start()
 
-        if url_holder:
-            return url_holder[0], lt_proc
+        start_t = time.time()
+        while time.time() - start_t < 10.0:
+            if url_holder:
+                return url_holder[0], proc, "Cloudflare"
+            if proc.poll() is not None:
+                break
+            time.sleep(0.2)
+
+        stop_event.set()
+        if proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
     except Exception:
         pass
+    return None, None, None
 
-    return None, None
+
+def start_tunnel(port: int = 8080):
+    """Start best available tunnel in order of compatibility."""
+    # 1. Tunnelmole: free, fast, no 15-min timeout, NOT blocked by VPN/antivirus
+    url, proc, provider = start_tunnelmole(port=port)
+    if url:
+        return url, proc, provider
+
+    # 2. localhost.run via SSH: guaranteed to connect from any network
+    url, proc, provider = start_ssh_tunnel(port=port)
+    if url:
+        return url, proc, provider
+
+    # 3. Cloudflare tunnel fallback
+    url, proc, provider = start_cloudflare_tunnel(port=port)
+    if url:
+        return url, proc, provider
+
+    return None, None, None
 
 
 def main():
@@ -220,23 +230,24 @@ def main():
     server_thread = threading.Thread(target=run_web, kwargs={"port": port}, daemon=True)
     server_thread.start()
 
-    time.sleep(1.5)
+    # Wait for server to bind port
+    time.sleep(2.0)
 
-    print("  [2/2] Подключение Cloudflare Tunnel (быстро, надежно, 24/7)...", flush=True)
-    tunnel_url, tunnel_proc = start_tunnel(port=port)
+    print("  [2/2] Создание защищенной публичной ссылки (без лимита)...", flush=True)
+    tunnel_url, tunnel_proc, provider = start_tunnel(port=port)
 
     print("\n" + "=" * 67, flush=True)
     if tunnel_url:
-        print("  [+] ПАРСЕР УСПЕШНО ДОСТУПЕН В ИНТЕРНЕТЕ!", flush=True)
+        print(f"  [+] ПАРСЕР УСПЕШНО ДОСТУПЕН В ИНТЕРНЕТЕ! ({provider})", flush=True)
         print("=" * 67, flush=True)
         print("\n  [>>>] ССЫЛКА ДЛЯ ДРУГА (СКОПИРОВАНА В БУФЕР ОБМЕНА):", flush=True)
         print(f"        {tunnel_url}\n", flush=True)
-        print("  Отправьте эту ссылку другу — она работает стабильно без лимита по времени.", flush=True)
+        print("  Отправьте эту ссылку другу — она открывается с любого устройства.", flush=True)
         print("  (Ссылка уже в буфере обмена — нажмите Ctrl+V в чате/Telegram)", flush=True)
         copy_to_clipboard(tunnel_url)
         webbrowser.open(tunnel_url)
     else:
-        print("  [!] Не удалось подключить онлайн-туннель.", flush=True)
+        print("  [!] Не удалось создать внешний туннель автоматически.", flush=True)
         print(f"  Сервер работает локально: http://localhost:{port}", flush=True)
 
     print("\n" + "=" * 67, flush=True)
@@ -244,12 +255,20 @@ def main():
     print("  Чтобы закрыть доступ, закройте это окно или нажмите Ctrl+C", flush=True)
     print("=" * 67 + "\n", flush=True)
 
+    # Watchdog loop: auto-reconnect if tunnel closes
     try:
         while True:
-            time.sleep(1)
+            time.sleep(2)
             if tunnel_proc and tunnel_proc.poll() is not None:
-                print("  [!] Туннель был закрыт.", flush=True)
-                break
+                print("\n  [!] Соединение туннеля было разорвано. Автоматический перезапуск...", flush=True)
+                tunnel_url, tunnel_proc, provider = start_tunnel(port=port)
+                if tunnel_url:
+                    print("\n" + "=" * 67, flush=True)
+                    print(f"  [+] НОВАЯ ССЫЛКА ({provider}):", flush=True)
+                    print(f"        {tunnel_url}\n", flush=True)
+                    copy_to_clipboard(tunnel_url)
+                    print("  (Новая ссылка скопирована в буфер обмена)", flush=True)
+                    print("=" * 67 + "\n", flush=True)
     except KeyboardInterrupt:
         pass
     finally:
