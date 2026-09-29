@@ -6,9 +6,9 @@ from typing import Optional, Dict, Any, List
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
 
 try:
-    from playwright_stealth import stealth_async
+    from playwright_stealth import Stealth
 except ImportError:
-    stealth_async = None
+    Stealth = None
 
 from core.models import Lead
 
@@ -137,9 +137,10 @@ class BaseScraper:
 
         await self.context.route("**/*", route_interceptor)
 
-        if stealth_async:
+        if Stealth:
             try:
-                await stealth_async(self.page)
+                stealth = Stealth()
+                await stealth.apply_stealth_async(self.page)
             except Exception as e:
                 logger.debug(f"Stealth injection notice: {e}")
 

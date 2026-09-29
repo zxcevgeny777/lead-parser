@@ -14,7 +14,7 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
 
 import threading
 import urllib.parse
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
@@ -572,11 +572,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                         <div>
                             <label>Источник карт</label>
                             <select id="source">
-                                <option value="both" selected>🇧🇾 🇷🇺 Яндекс Карты + 2ГИС (РБ / СНГ)</option>
-                                <option value="yandex">Только Яндекс Карты</option>
+                                <option value="all" selected>🌍 Все источники сразу (Google Maps + Яндекс + 2ГИС)</option>
                                 <option value="google">🇺🇸 🇪🇺 Google Maps (США, Европа, Весь мир)</option>
+                                <option value="both">🇧🇾 🇷🇺 Яндекс Карты + 2ГИС (РБ / СНГ)</option>
+                                <option value="yandex">Только Яндекс Карты</option>
                                 <option value="2gis">Только 2ГИС</option>
-                                <option value="all">🌍 Все источники сразу</option>
                             </select>
                         </div>
                         <div>
@@ -1047,7 +1047,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 if (cityChipsCIS) cityChipsCIS.style.display = 'flex';
                 if (cityChipsUS) cityChipsUS.style.display = 'none';
                 queryEl.setAttribute('list', 'nichesListCIS');
-                if (sourceEl) sourceEl.value = 'both';
+                if (sourceEl) sourceEl.value = 'all';
                 if (!queryEl.value || queryEl.value === 'Roofing Contractors') {
                     queryEl.value = 'Коттеджи на сутки и агроусадьбы';
                 }
@@ -1933,6 +1933,30 @@ async def run_search_task(
                 except Exception as e:
                     print(f"[WebUI] 2GIS error for {current_city}: {e}")
 
+            # Fallback: if regional maps yielded 0 leads (cloud datacenter IP blocking), auto-fallback to Google Maps
+            if len(all_leads) == 0 and source in ("both", "yandex", "2gis"):
+                CURRENT_STATE["progress_message"] = f"{prefix}Подключение Google Maps для {city_label}..."
+                try:
+                    fb_scraper = GoogleMapsScraper(headless=True, on_lead_found=on_lead, on_progress=on_progress)
+                    fb_leads = await fb_scraper.search(
+                        query=query,
+                        city=current_city,
+                        limit=curr_limit,
+                        filter_type=filter_type,
+                        skip_checked=skip_checked,
+                        verify_web=False,
+                    )
+                    for l in fb_leads:
+                        key = (l.name.lower().strip(), l.primary_phone)
+                        if key not in seen:
+                            seen.add(key)
+                            if not l.ai_pitch:
+                                enrich_lead_with_pitch(l)
+                            all_leads.append(l)
+                            CURRENT_STATE["leads"].append(l.model_dump())
+                except Exception as e:
+                    print(f"[WebUI] Google Maps fallback error: {e}")
+
         # Web Search Verification if requested by user
         if verify_web and all_leads:
             CURRENT_STATE["progress_message"] = f"🌐 Проверка наличия сайтов в сети ({len(all_leads)} компаний)..."
@@ -2422,7 +2446,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 def run_web(port: int = 8080):
     host = os.environ.get("HOST", "0.0.0.0")
     env_port = int(os.environ.get("PORT", port))
-    server = HTTPServer((host, env_port), RequestHandler)
+    server = ThreadingHTTPServer((host, env_port), RequestHandler)
     print(f"\n=======================================================")
     print(f"🚀 Веб-интерфейс лид-парсера запущен на {host}:{env_port}!")
     print(f"👉 Откройте в браузере: http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{env_port}")
