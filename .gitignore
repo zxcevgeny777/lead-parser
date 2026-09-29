@@ -1,0 +1,26 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Local databases & exported leads
+*.db
+leads_*.csv
+leads_*.xlsx
+*.xlsx
+*.csv
+
+# Temporary and backup folders
+backup_before_upgrade/
+scratch/
+
+# Logs & temp
+*.log
+.DS_Store
+Thumbs.db

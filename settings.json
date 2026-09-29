@@ -1,0 +1,10 @@
+{
+  "telegram_bot_token": "",
+  "telegram_chat_id": "",
+  "gemini_api_key": "",
+  "auto_monitor_enabled": false,
+  "monitor_interval_minutes": 3,
+  "notify_onliner": true,
+  "notify_kwork": true,
+  "notify_fl": true
+}
