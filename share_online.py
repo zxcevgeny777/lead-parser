@@ -26,114 +26,119 @@ def copy_to_clipboard(text: str):
 
 
 def start_tunnel(port: int = 8080):
-    tunnel_url = None
-    proc = None
+    cmd = [
+        "ssh",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "ServerAliveInterval=30",
+        "-R",
+        f"80:localhost:{port}",
+        "nokey@localhost.run",
+    ]
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="ignore",
+    )
 
-    # Method 1: Built-in OpenSSH to localhost.run (instant, no password required)
-    try:
-        cmd = [
-            "ssh",
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            "ServerAliveInterval=30",
-            "-R",
-            f"80:localhost:{port}",
-            "nokey@localhost.run",
-        ]
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="ignore",
-        )
+    url_holder = []
 
-        for _ in range(40):
-            line = proc.stdout.readline()
+    def reader():
+        for line in iter(proc.stdout.readline, ""):
             if not line:
                 break
             if "lhr.life" in line:
                 urls = re.findall(r"https://[a-zA-Z0-9\.\-_]+\.lhr\.life", line)
                 if urls:
-                    tunnel_url = urls[0]
+                    url_holder.append(urls[0])
                     break
-            time.sleep(0.1)
-    except Exception:
-        pass
 
-    # Method 2: Fallback to localtunnel if ssh did not connect
-    if not tunnel_url:
-        if proc:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+    t.join(timeout=8.0)
+
+    if url_holder:
+        return url_holder[0], proc
+
+    # Fallback to localtunnel if ssh tunnel didn't report URL within 8s
+    if proc:
         try:
-            cmd = ["npx", "--yes", "localtunnel", "--port", str(port)]
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="ignore",
-                shell=True,
-            )
-            for _ in range(40):
-                line = proc.stdout.readline()
+            proc.terminate()
+        except Exception:
+            pass
+
+    try:
+        lt_proc = subprocess.Popen(
+            ["npx", "--yes", "localtunnel", "--port", str(port)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            shell=True,
+        )
+
+        def lt_reader():
+            for line in iter(lt_proc.stdout.readline, ""):
                 if not line:
                     break
                 if "loca.lt" in line:
                     urls = re.findall(r"https://[a-zA-Z0-9\.\-_]+\.loca\.lt", line)
                     if urls:
-                        tunnel_url = urls[0]
+                        url_holder.append(urls[0])
                         break
-                time.sleep(0.1)
-        except Exception:
-            pass
 
-    return tunnel_url, proc
+        t2 = threading.Thread(target=lt_reader, daemon=True)
+        t2.start()
+        t2.join(timeout=10.0)
+
+        if url_holder:
+            return url_holder[0], lt_proc
+    except Exception:
+        pass
+
+    return None, None
 
 
 def main():
     port = int(os.environ.get("PORT", 8080))
     os.environ["HOST"] = "0.0.0.0"
 
-    print("=======================================================")
-    print("  Запуск сервера и генерация онлайн-ссылки...")
-    print("=======================================================")
+    print("===================================================================")
+    print("  [1/2] Запуск сервера лид-парсера...")
+    print("===================================================================")
 
-    # Import web_ui and start server in background thread
     from web_ui import run_web
 
     server_thread = threading.Thread(target=run_web, kwargs={"port": port}, daemon=True)
     server_thread.start()
 
-    # Wait for server to bind
-    time.sleep(1.2)
+    time.sleep(1.5)
 
-    # Establish tunnel
+    print("  [2/2] Создание защищенной публичной ссылки...")
     tunnel_url, tunnel_proc = start_tunnel(port=port)
 
-    print("\n" + "=" * 65)
+    print("\n" + "=" * 67)
     if tunnel_url:
         print("  🚀 ПАРСЕР УСПЕШНО ДОСТУПЕН В ИНТЕРНЕТЕ!")
-        print("=" * 65)
+        print("=" * 67)
         print(f"\n  👉 ССЫЛКА ДЛЯ ДРУГА (ОТПРАВЬТЕ ЕМУ):")
         print(f"     {tunnel_url}\n")
-        print("  (Ссылка уже скопирована в буфер обмена - просто нажмите Ctrl+V в чате)")
+        print("  (Ссылка уже скопирована в буфер обмена - просто нажми Ctrl+V в чате)")
         copy_to_clipboard(tunnel_url)
         webbrowser.open(tunnel_url)
     else:
         print("  ⚠️ Не удалось создать онлайн-туннель.")
         print(f"  Сервер работает локально: http://localhost:{port}")
 
-    print("\n" + "=" * 65)
-    print(f"  👉 Локальный адрес на вашем компьютере: http://localhost:{port}")
-    print("  Для завершения работы и закрытия доступа нажмите Ctrl + C")
-    print("=" * 65 + "\n")
+    print("\n" + "=" * 67)
+    print(f"  👉 Локально на вашем ПК: http://localhost:{port}")
+    print("  Чтобы закрыть доступ, просто закройте это окно или нажмите Ctrl+C")
+    print("=" * 67 + "\n")
 
     try:
         while True:
@@ -145,7 +150,7 @@ def main():
                 tunnel_proc.terminate()
             except Exception:
                 pass
-        print("Готово. Работа завершена.")
+        print("Работа завершена.")
 
 
 if __name__ == "__main__":
