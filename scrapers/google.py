@@ -118,6 +118,8 @@ class GoogleMapsScraper:
                     await page.wait_for_selector('div[role="feed"], h1', timeout=6000)
                 except Exception:
                     pass
+
+                feed_loc = page.locator('div[role="feed"]')
                 if await feed_loc.count() == 0:
                     # Check if single place directly opened
                     if "/maps/place/" in page.url:
