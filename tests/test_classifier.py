@@ -60,6 +60,23 @@ def test_classify_regular_website():
     assert priority == LeadPriority.LOW
 
 
+def test_unwrap_tracking_redirects():
+    # Yandex Maps clck redirect
+    y_status, y_prio = classify_website("https://yandex.ru/clck/jsredir?from=maps&text=https%3A%2F%2Fstroyka.by%2Fcatalog&cflag=1")
+    assert y_status == WebsiteStatus.HAS_WEBSITE
+    assert y_prio == LeadPriority.LOW
+
+    # Google Maps url redirect
+    g_status, g_prio = classify_website("https://www.google.com/url?q=https%3A%2F%2Fdentist.com&sa=U")
+    assert g_status == WebsiteStatus.HAS_WEBSITE
+    assert g_prio == LeadPriority.LOW
+
+    # 2GIS redirect
+    dg_status, dg_prio = classify_website("https://2gis.ru/redirect?url=https%3A%2F%2Fremont.ru")
+    assert dg_status == WebsiteStatus.HAS_WEBSITE
+    assert dg_prio == LeadPriority.LOW
+
+
 def test_format_phone():
     assert format_phone("89991112233") == "+7 (999) 111-22-33"
     assert format_phone("+7 (999) 111-22-33") == "+7 (999) 111-22-33"

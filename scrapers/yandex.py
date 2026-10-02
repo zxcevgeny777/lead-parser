@@ -5,7 +5,7 @@ import re
 import urllib.parse
 from typing import List, Dict, Any, Optional, Callable
 
-from core.models import Lead, LeadPriority, classify_website, parse_and_format_phone
+from core.models import Lead, LeadPriority, WebsiteStatus, classify_website, parse_and_format_phone, unwrap_and_clean_url
 from core.memory import memory_db
 from .base import BaseScraper
 
@@ -128,44 +128,53 @@ class YandexScraper(BaseScraper):
 
                 # 4. Direct extraction of official website from Yandex business-urls block
                 official_site_el = await card_page.query_selector(
-                    'div.business-urls-view a, a.business-urls-view__link, [class*="business-urls"] a'
+                    'div.business-urls-view a, a.business-urls-view__link, [class*="business-urls"] a, [class*="website"] a'
                 )
                 if official_site_el:
                     site_href = await official_site_el.get_attribute("href")
-                    if site_href and not any(ign in site_href.lower() for ign in IGNORABLE_DOMAINS):
-                        website = site_href
+                    cleaned_href = unwrap_and_clean_url(site_href)
+                    if cleaned_href:
+                        website = cleaned_href
+                    else:
+                        try:
+                            site_txt = (await official_site_el.inner_text()).strip()
+                            if site_txt and "." in site_txt and " " not in site_txt and not any(ign in site_txt.lower() for ign in ("yandex", "ya.ru", "google")):
+                                website = unwrap_and_clean_url(f"https://{site_txt}")
+                        except Exception:
+                            pass
 
-                # 4. Extract social media links and external links
+                # 5. Extract social media links and external links
                 external_links = await card_page.query_selector_all('a[href^="http"]')
                 for el in external_links:
                     href = await el.get_attribute("href")
                     if not href:
                         continue
-                    h_lower = href.lower()
-                    if any(ign in h_lower for ign in IGNORABLE_DOMAINS):
+                    clean_h = unwrap_and_clean_url(href)
+                    target_url = clean_h or href
+                    h_lower = target_url.lower()
+
+                    if any(ign in h_lower for ign in ("maps/org", "clck/", "yandex.", "ya.ru", "ya.by", "google.", "2gis.")):
                         continue
 
-                    if ("vk.com" in h_lower or "vk.ru" in h_lower) and "yandex" not in h_lower:
-                        socials["vk"] = href
-                    elif ("t.me" in h_lower or "telegram.me" in h_lower) and "yandex" not in h_lower:
-                        socials["telegram"] = href
+                    if ("vk.com" in h_lower or "vk.ru" in h_lower):
+                        socials["vk"] = target_url
+                    elif ("t.me" in h_lower or "telegram.me" in h_lower):
+                        socials["telegram"] = target_url
                     elif "wa.me" in h_lower or "whatsapp.com" in h_lower:
-                        socials["whatsapp"] = href
+                        socials["whatsapp"] = target_url
                     elif "instagram.com" in h_lower:
-                        socials["instagram"] = href
+                        socials["instagram"] = target_url
                     elif "ok.ru" in h_lower or "odnoklassniki.ru" in h_lower:
-                        socials["ok"] = href
+                        socials["ok"] = target_url
                     elif "viber.click" in h_lower or "viber.com" in h_lower:
-                        socials["viber"] = href
+                        socials["viber"] = target_url
                     elif "facebook.com" in h_lower or "fb.com" in h_lower:
-                        socials["facebook"] = href
-                    elif not website:
-                        website = href
+                        socials["facebook"] = target_url
+                    elif not website and clean_h:
+                        website = clean_h
 
             if website:
-                w_chk = website.lower()
-                if any(ign in w_chk for ign in IGNORABLE_DOMAINS) or "maps/org" in w_chk or "clck/" in w_chk:
-                    website = None
+                website = unwrap_and_clean_url(website)
 
         except Exception as e:
             logger.debug(f"[Yandex Maps] Error enriching card for {item.get('name')}: {e}")
@@ -305,8 +314,11 @@ class YandexScraper(BaseScraper):
                                 pass
 
                     # Website if already present on snippet
-                    site_el = await snip.query_selector('a[href^="http"]:not([href*="yandex"])')
-                    website = await site_el.get_attribute("href") if site_el else None
+                    site_el = await snip.query_selector('a[class*="business-url"], a[class*="link"], a[href^="http"]')
+                    website = None
+                    if site_el:
+                        site_href = await site_el.get_attribute("href")
+                        website = unwrap_and_clean_url(site_href)
 
                     # Phone if already present in snippet text
                     phones = []
@@ -365,7 +377,7 @@ class YandexScraper(BaseScraper):
                 elif filter_type == "social_only":
                     return lead.lead_priority == LeadPriority.MEDIUM
                 elif filter_type == "hot_warm":
-                    return lead.lead_priority in (LeadPriority.HIGH, LeadPriority.MEDIUM)
+                    return lead.lead_priority in (LeadPriority.HIGH, LeadPriority.MEDIUM) and lead.website_status != WebsiteStatus.HAS_WEBSITE
                 return True
 
             # Parallel card enrichment with Semaphore(3)

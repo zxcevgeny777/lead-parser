@@ -18,7 +18,10 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
-from core.models import Lead, LeadPriority, WebsiteStatus, FreelanceOrder
+from core.models import (
+    Lead, LeadPriority, WebsiteStatus, FreelanceOrder,
+    classify_website, unwrap_and_clean_url
+)
 from core.exporter import export_to_excel, export_to_csv, export_freelance_to_excel, export_freelance_to_csv
 from core.niches import (
     POPULAR_NICHES, QUICK_NICHES,
@@ -1848,8 +1851,19 @@ async def run_search_task(
             remaining_needed = limit - len(all_leads)
             curr_limit = min(per_city_target, remaining_needed) if len(cities) > 1 else remaining_needed
 
+            def is_qualifying_lead(l: Lead) -> bool:
+                if filter_type == "hot_only":
+                    return l.lead_priority == LeadPriority.HIGH and (not l.website or l.website_status == WebsiteStatus.NO_WEBSITE)
+                elif filter_type == "social_only":
+                    return l.lead_priority == LeadPriority.MEDIUM
+                elif filter_type == "hot_warm":
+                    return l.lead_priority in (LeadPriority.HIGH, LeadPriority.MEDIUM) and l.website_status != WebsiteStatus.HAS_WEBSITE
+                return True
+
             def on_lead(lead: Lead):
                 if CURRENT_STATE.get("cancel_requested"):
+                    return
+                if not is_qualifying_lead(lead):
                     return
                 key = (lead.name.lower().strip(), lead.primary_phone)
                 if key not in seen:
@@ -1882,13 +1896,16 @@ async def run_search_task(
                     )
                     total_skipped += getattr(gmaps_scraper, "skipped_checked_count", 0)
                     for l in gmaps_leads:
+                        if not is_qualifying_lead(l):
+                            continue
                         key = (l.name.lower().strip(), l.primary_phone)
                         if key not in seen:
                             seen.add(key)
                             if not l.ai_pitch:
                                 enrich_lead_with_pitch(l)
                             all_leads.append(l)
-                            CURRENT_STATE["leads"].append(l.model_dump())
+                            with STATE_LOCK:
+                                CURRENT_STATE["leads"].append(l.model_dump())
                 except Exception as e:
                     print(f"[WebUI] Google Maps error for {current_city}: {e}")
 
@@ -1906,13 +1923,16 @@ async def run_search_task(
                     )
                     total_skipped += getattr(y_scraper, "skipped_checked_count", 0)
                     for l in y_leads:
+                        if not is_qualifying_lead(l):
+                            continue
                         key = (l.name.lower().strip(), l.primary_phone)
                         if key not in seen:
                             seen.add(key)
                             if not l.ai_pitch:
                                 enrich_lead_with_pitch(l)
                             all_leads.append(l)
-                            CURRENT_STATE["leads"].append(l.model_dump())
+                            with STATE_LOCK:
+                                CURRENT_STATE["leads"].append(l.model_dump())
                 except Exception as e:
                     print(f"[WebUI] Yandex error for {current_city}: {e}")
 
@@ -1926,18 +1946,21 @@ async def run_search_task(
                         query=query,
                         city=current_city,
                         limit=g_limit,
-                        filter_no_website_only=(filter_type == "hot_only"),
+                        filter_type=filter_type,
                         skip_checked=skip_checked,
                     )
                     total_skipped += getattr(g_scraper, "skipped_checked_count", 0)
                     for l in g_leads:
+                        if not is_qualifying_lead(l):
+                            continue
                         key = (l.name.lower().strip(), l.primary_phone)
                         if key not in seen:
                             seen.add(key)
                             if not l.ai_pitch:
                                 enrich_lead_with_pitch(l)
                             all_leads.append(l)
-                            CURRENT_STATE["leads"].append(l.model_dump())
+                            with STATE_LOCK:
+                                CURRENT_STATE["leads"].append(l.model_dump())
                 except Exception as e:
                     print(f"[WebUI] 2GIS error for {current_city}: {e}")
 
@@ -1955,13 +1978,16 @@ async def run_search_task(
                         verify_web=False,
                     )
                     for l in fb_leads:
+                        if not is_qualifying_lead(l):
+                            continue
                         key = (l.name.lower().strip(), l.primary_phone)
                         if key not in seen:
                             seen.add(key)
                             if not l.ai_pitch:
                                 enrich_lead_with_pitch(l)
                             all_leads.append(l)
-                            CURRENT_STATE["leads"].append(l.model_dump())
+                            with STATE_LOCK:
+                                CURRENT_STATE["leads"].append(l.model_dump())
                 except Exception as e:
                     print(f"[WebUI] Google Maps fallback error: {e}")
 
@@ -1969,7 +1995,7 @@ async def run_search_task(
         if verify_web and all_leads:
             CURRENT_STATE["progress_message"] = f"🌐 Проверка наличия сайтов в сети ({len(all_leads)} компаний)..."
             for idx, lead in enumerate(all_leads, 1):
-                if lead.source != "Google Maps" and (not lead.website or lead.website_status in (WebsiteStatus.NO_WEBSITE, WebsiteStatus.TAPLINK)):
+                if not lead.website or lead.website_status in (WebsiteStatus.NO_WEBSITE, WebsiteStatus.TAPLINK):
                     try:
                         has_site, detected_site = await verify_company_website(lead.name, lead.city)
                         if has_site and detected_site:
@@ -2002,14 +2028,7 @@ async def run_search_task(
                     CURRENT_STATE["progress_message"] = f"💡 Аудит и AI-питчи: {idx}/{len(all_leads)}..."
 
         # Strict Filtering logic
-        if filter_type == "hot_only":
-            filtered = [l for l in all_leads if l.lead_priority == LeadPriority.HIGH and (not l.website or l.website_status == WebsiteStatus.NO_WEBSITE)]
-        elif filter_type == "social_only":
-            filtered = [l for l in all_leads if l.lead_priority == LeadPriority.MEDIUM]
-        elif filter_type == "hot_warm":
-            filtered = [l for l in all_leads if l.lead_priority in (LeadPriority.HIGH, LeadPriority.MEDIUM)]
-        else:
-            filtered = all_leads
+        filtered = [l for l in all_leads if is_qualifying_lead(l)]
 
         # Sort priority
         order = {LeadPriority.HIGH: 0, LeadPriority.MEDIUM: 1, LeadPriority.LOW: 2}

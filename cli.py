@@ -261,6 +261,7 @@ async def run_cli():
                     query=query,
                     city=current_city,
                     limit=sub_limit,
+                    filter_type=filter_mode,
                     filter_no_website_only=(filter_choice == "1"),
                     skip_checked=skip_checked,
                 )
@@ -284,7 +285,7 @@ async def run_cli():
         filtered_leads = [l for l in unique_leads if l.lead_priority == LeadPriority.MEDIUM]
     elif filter_choice == "3":
         filtered_leads = [
-            l for l in unique_leads if l.lead_priority in (LeadPriority.HIGH, LeadPriority.MEDIUM)
+            l for l in unique_leads if l.lead_priority in (LeadPriority.HIGH, LeadPriority.MEDIUM) and l.website_status != WebsiteStatus.HAS_WEBSITE
         ]
     else:
         filtered_leads = unique_leads

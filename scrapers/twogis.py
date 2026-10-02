@@ -6,7 +6,7 @@ import socket
 import urllib.parse
 from typing import List, Dict, Any, Optional, Callable
 
-from core.models import Lead, classify_website
+from core.models import Lead, LeadPriority, WebsiteStatus, classify_website, unwrap_and_clean_url
 from core.memory import memory_db
 from .base import BaseScraper
 
@@ -67,6 +67,17 @@ class TwoGisScraper(BaseScraper):
         self.skip_checked: bool = True
         self.skipped_checked_count: int = 0
         self._cached_memory: Dict[str, Set[str]] = {"urls": set(), "phones": set(), "name_city": set()}
+        self.filter_type: str = "hot_warm"
+        self.filter_no_website_only: bool = False
+
+    def _is_qualifying(self, lead: Lead) -> bool:
+        if self.filter_no_website_only or self.filter_type == "hot_only":
+            return lead.lead_priority == LeadPriority.HIGH and (not lead.website or lead.website_status == WebsiteStatus.NO_WEBSITE)
+        elif self.filter_type == "social_only":
+            return lead.lead_priority == LeadPriority.MEDIUM
+        elif self.filter_type == "hot_warm":
+            return lead.lead_priority in (LeadPriority.HIGH, LeadPriority.MEDIUM) and lead.website_status != WebsiteStatus.HAS_WEBSITE
+        return True
 
     def _parse_api_item(self, item: Dict[str, Any], default_city: str) -> Optional[Lead]:
         """Parses a raw 2GIS catalog item from API into a Lead object."""
@@ -133,8 +144,8 @@ class TwoGisScraper(BaseScraper):
                         phone_val = c_text or c_value
                         if phone_val and phone_val not in phones:
                             phones.append(phone_val)
-                    elif c_type == "website":
-                        site_url = c_url or c_text
+                    elif c_type in ("website", "url", "site", "link"):
+                        site_url = unwrap_and_clean_url(c_url or c_text or c_value)
                         if site_url:
                             website = site_url
                     elif "vk" in c_type:
@@ -149,6 +160,9 @@ class TwoGisScraper(BaseScraper):
             schedule_info = item.get("schedule", {})
             working_hours = schedule_info.get("description") if schedule_info else None
             map_url = f"https://2gis.ru/firm/{item_id}" if item_id else None
+
+            if website:
+                website = unwrap_and_clean_url(website)
 
             status, priority = classify_website(website)
 
@@ -195,7 +209,7 @@ class TwoGisScraper(BaseScraper):
                             break
                         if isinstance(item, dict):
                             lead = self._parse_api_item(item, city)
-                            if lead:
+                            if lead and self._is_qualifying(lead):
                                 self.leads.append(lead)
                                 if self.on_lead_found:
                                     self.on_lead_found(lead)
@@ -236,9 +250,10 @@ class TwoGisScraper(BaseScraper):
                         website=None,
                         map_url=map_url,
                     )
-                    self.leads.append(lead)
-                    if self.on_lead_found:
-                        self.on_lead_found(lead)
+                    if self._is_qualifying(lead):
+                        self.leads.append(lead)
+                        if self.on_lead_found:
+                            self.on_lead_found(lead)
                 except Exception:
                     pass
         except Exception:
@@ -249,6 +264,7 @@ class TwoGisScraper(BaseScraper):
         query: str,
         city: str = "",
         limit: int = 50,
+        filter_type: str = "hot_warm",
         filter_no_website_only: bool = False,
         skip_checked: bool = True,
     ) -> List[Lead]:
@@ -257,6 +273,8 @@ class TwoGisScraper(BaseScraper):
         self._seen_ids = set()
         self.skip_checked = skip_checked
         self.skipped_checked_count = 0
+        self.filter_type = filter_type
+        self.filter_no_website_only = filter_no_website_only
         self._cached_memory = (
             memory_db.load_cached_lookups()
             if skip_checked
@@ -356,9 +374,7 @@ class TwoGisScraper(BaseScraper):
         if self.leads:
             memory_db.save_leads(self.leads)
 
-        results = self.leads[:limit]
-        if filter_no_website_only:
-            results = [l for l in results if not l.website]
+        results = [l for l in self.leads if self._is_qualifying(l)][:limit]
 
         logger.info(
             f"[2GIS] Extracted {len(results)} leads. "

@@ -8,7 +8,7 @@ from typing import List, Optional, Callable, Dict, Any
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from playwright_stealth import Stealth
 
-from core.models import Lead, WebsiteStatus, LeadPriority, classify_website, format_phone
+from core.models import Lead, WebsiteStatus, LeadPriority, classify_website, format_phone, unwrap_and_clean_url
 from core.memory import memory_db
 from core.web_verifier import verify_company_website
 
@@ -156,7 +156,13 @@ class GoogleMapsScraper:
                             const reviewsEl = item.querySelector('span.UY7F9, span[class*="review"]');
                             const reviews = reviewsEl ? reviewsEl.innerText.trim().replace(/[()]/g, '') : "";
                             
-                            const siteEl = item.querySelector('a[data-value="Website"], a[aria-label*="website" i]');
+                            const siteEl = item.querySelector(
+                                'a[data-value="Website"], a[data-value="Сайт"], a[data-value="Веб-сайт"], ' +
+                                'a[aria-label*="website" i], a[aria-label*="сайт" i], ' +
+                                'a[data-tooltip*="website" i], a[data-tooltip*="сайт" i], ' +
+                                'a[data-item-id="authority"], ' +
+                                'a[href^="http"]:not([href*="google."]):not([href*="gstatic."]):not([href*="ggpht."])'
+                            );
                             const website = siteEl ? siteEl.href : "";
                             
                             const lines = item.innerText.split('\\n').map(l => l.trim()).filter(l => l.length > 0);
@@ -191,7 +197,7 @@ class GoogleMapsScraper:
                             continue
 
                         raw_text = c.get("raw_text", "")
-                        raw_website = c.get("website", "").strip()
+                        raw_website = unwrap_and_clean_url(c.get("website", "").strip())
 
                         # Extract phone number via regex from card text
                         phone_match = re.search(
@@ -236,14 +242,14 @@ class GoogleMapsScraper:
                             pass
 
                         # Determine website status & priority
-                        website_status, priority = classify_website(raw_website if raw_website else None)
+                        website_status, priority = classify_website(raw_website)
 
                         # Filter by user preference
-                        if filter_type == "hot_only" and website_status != WebsiteStatus.NO_WEBSITE:
+                        if filter_type == "hot_only" and (website_status != WebsiteStatus.NO_WEBSITE or raw_website):
                             continue
                         elif filter_type == "social_only" and website_status not in (WebsiteStatus.SOCIAL, WebsiteStatus.TAPLINK, WebsiteStatus.BUILDER):
                             continue
-                        elif filter_type == "hot_warm" and website_status == WebsiteStatus.HAS_WEBSITE:
+                        elif filter_type == "hot_warm" and (website_status == WebsiteStatus.HAS_WEBSITE or (raw_website and website_status not in (WebsiteStatus.SOCIAL, WebsiteStatus.TAPLINK, WebsiteStatus.BUILDER))):
                             continue
 
                         # Web verification check if requested and marked as NO_WEBSITE
@@ -336,7 +342,13 @@ class GoogleMapsScraper:
                 const reviews = document.querySelector('div.F7nice span:last-child')?.innerText?.trim()?.replace(/[()]/g, '') || "";
                 const address = document.querySelector('button[data-item-id="address"]')?.innerText?.trim() || "";
                 const phone = document.querySelector('button[data-item-id^="phone:"]')?.innerText?.trim() || "";
-                const website = document.querySelector('a[data-item-id="authority"]')?.href || "";
+                const websiteEl = document.querySelector(
+                    'a[data-item-id="authority"], ' +
+                    'a[data-value="Website"], a[data-value="Сайт"], ' +
+                    'a[aria-label*="website" i], a[aria-label*="сайт" i], ' +
+                    'a[href^="http"]:not([href*="google."]):not([href*="gstatic."])'
+                );
+                const website = websiteEl ? websiteEl.href : "";
                 const category = document.querySelector('button[jsaction*="category"]')?.innerText?.trim() || "";
                 return { name, rating, reviews, address, phone, website, category };
             }''')
@@ -345,8 +357,8 @@ class GoogleMapsScraper:
             if not name:
                 return None
 
-            raw_site = info.get("website", "").strip()
-            status, priority = classify_website(raw_site if raw_site else None)
+            raw_site = unwrap_and_clean_url(info.get("website", "").strip())
+            status, priority = classify_website(raw_site)
             phone_val = info.get("phone", "").strip()
 
             return Lead(

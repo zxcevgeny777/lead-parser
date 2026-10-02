@@ -2,7 +2,7 @@
 from enum import Enum
 import re
 from typing import List, Dict, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, unquote
 from pydantic import BaseModel, Field, computed_field
 
 
@@ -96,20 +96,63 @@ DIRECTORY_CATALOG_DOMAINS = {
 }
 
 
+def unwrap_and_clean_url(raw_url: Optional[str]) -> Optional[str]:
+    """Unwraps redirect wrappers (Yandex clck/jsredir, Google url?q=, 2GIS redirect)
+    and removes pure map/search engine links.
+    Returns cleaned business URL or None if company has no official website.
+    """
+    if not raw_url or not isinstance(raw_url, str):
+        return None
+    url = raw_url.strip()
+    if not url or url.lower() in {"нет", "none", "null", "-", "отсутствует", "undefined"}:
+        return None
+
+    if not url.startswith(("http://", "https://")):
+        if "." in url and not url.startswith("/") and " " not in url:
+            url = "https://" + url
+        else:
+            return None
+
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return None
+
+    # 1. Check query parameters for wrapped destination URL (Yandex, Google, 2GIS redirects)
+    qs = parse_qs(parsed.query)
+    for p in ("text", "url", "q", "target", "dest", "link", "to", "r"):
+        if p in qs and qs[p]:
+            candidate = unquote(qs[p][0]).strip()
+            if candidate.startswith(("http://", "https://")):
+                try:
+                    c_parsed = urlparse(candidate)
+                    c_netloc = c_parsed.netloc.lower()
+                    if not any(ign in c_netloc for ign in ("yandex.", "ya.ru", "ya.by", "google.", "2gis.", "apple.")):
+                        return unwrap_and_clean_url(candidate)
+                except Exception:
+                    pass
+
+    netloc = parsed.netloc.lower()
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+
+    # 2. Check search engine / map links (NOT business websites!)
+    for map_domain in MAP_AND_SEARCH_DOMAINS:
+        if netloc == map_domain or netloc.endswith("." + map_domain) or any(d in netloc for d in ("yandex.", "google.", "2gis.")):
+            return None
+
+    clean_site = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
+    return clean_site or f"{parsed.scheme}://{parsed.netloc}"
+
+
 def classify_website(raw_url: Optional[str]) -> Tuple[WebsiteStatus, LeadPriority]:
     """Classifies a business website for lead scoring.
 
     Returns (WebsiteStatus, LeadPriority).
     """
-    if not raw_url or not isinstance(raw_url, str):
+    clean_url = unwrap_and_clean_url(raw_url)
+    if not clean_url:
         return WebsiteStatus.NO_WEBSITE, LeadPriority.HIGH
-
-    clean_url = raw_url.strip()
-    if not clean_url or clean_url.lower() in {"нет", "none", "null", "-", "отсутствует"}:
-        return WebsiteStatus.NO_WEBSITE, LeadPriority.HIGH
-
-    if not clean_url.startswith(("http://", "https://")):
-        clean_url = "https://" + clean_url
 
     try:
         parsed = urlparse(clean_url)
@@ -121,7 +164,7 @@ def classify_website(raw_url: Optional[str]) -> Tuple[WebsiteStatus, LeadPriorit
 
     # 0. Check search engine / map links (NOT business websites!)
     for map_domain in MAP_AND_SEARCH_DOMAINS:
-        if netloc == map_domain or netloc.endswith("." + map_domain) or "yandex." in netloc or "google." in netloc or "2gis." in netloc:
+        if netloc == map_domain or netloc.endswith("." + map_domain) or any(d in netloc for d in ("yandex.", "google.", "2gis.")):
             return WebsiteStatus.NO_WEBSITE, LeadPriority.HIGH
 
     # 1. Check Taplink / Link aggregators
@@ -280,19 +323,18 @@ class Lead(BaseModel):
     def __init__(self, **data):
         super().__init__(**data)
 
-        # Sanitize website: if it points to search engine / maps or internal yandex/google url, clear it!
-        if self.website:
-            w_lower = str(self.website).lower().strip()
-            if any(eng in w_lower for eng in ["yandex.", "ya.ru", "ya.by", "google.", "2gis.", "maps/org", "clck/"]):
-                object.__setattr__(self, "website", None)
-                object.__setattr__(self, "website_status", WebsiteStatus.NO_WEBSITE)
-                object.__setattr__(self, "lead_priority", LeadPriority.HIGH)
+        # Sanitize website: unwrap tracking redirects and clear pure map links
+        cleaned_site = unwrap_and_clean_url(self.website)
+        object.__setattr__(self, "website", cleaned_site)
 
         # Automatically classify website if not explicitly given
         if "website_status" not in data or "lead_priority" not in data:
-            status, priority = classify_website(self.website)
+            status, priority = classify_website(cleaned_site)
             object.__setattr__(self, "website_status", status)
             object.__setattr__(self, "lead_priority", priority)
+        elif not cleaned_site:
+            object.__setattr__(self, "website_status", WebsiteStatus.NO_WEBSITE)
+            object.__setattr__(self, "lead_priority", LeadPriority.HIGH)
 
         # Format phones and determine mobile status
         if self.phones:
