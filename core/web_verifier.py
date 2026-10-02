@@ -164,11 +164,18 @@ def verify_company_website_sync(company_name: str, city: str = "") -> Tuple[bool
     if not clean_name or len(clean_name) < 2:
         return False, None
 
-    # 1. Candidate Domain Strategy
-    candidates = generate_candidate_domains(clean_name, city)
-    for domain in candidates[:10]:
-        if check_domain_active_sync(domain):
-            return True, f"https://{domain}"
+    # 1. Candidate Domain Strategy (concurrent check for 8x speedup)
+    candidates = generate_candidate_domains(clean_name, city)[:10]
+    if candidates:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=min(8, len(candidates))) as executor:
+            future_to_domain = {executor.submit(check_domain_active_sync, d): d for d in candidates}
+            for future in as_completed(future_to_domain):
+                try:
+                    if future.result():
+                        return True, f"https://{future_to_domain[future]}"
+                except Exception:
+                    pass
 
     # 2. Web Search Strategy (DDG HTML fallback)
     try:

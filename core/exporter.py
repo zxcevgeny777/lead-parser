@@ -1,11 +1,11 @@
 """Export leads to styled Excel and CSV formats."""
 import os
 from typing import List
+import csv
 from datetime import datetime
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-import pandas as pd
 
 from .models import Lead, LeadPriority, WebsiteStatus, FreelanceOrder
 
@@ -215,9 +215,16 @@ def export_to_csv(leads: List[Lead], output_path: str = None) -> str:
             "Ссылка на картах": lead.map_url or "",
         })
 
-    df = pd.DataFrame(rows)
-    # utf-8-sig ensures Windows Excel opens Russian characters without encoding corruption
-    df.to_csv(output_path, index=False, encoding="utf-8-sig", sep=";")
+    headers = [
+        "Приоритет лида", "Статус сайта", "Название", "Тип связи", "Телефоны",
+        "WhatsApp", "Telegram", "Сайт", "Аудит сайта", "AI-Питч (WhatsApp/TG)",
+        "Скрипт звонка", "Ниша / Рубрика", "Город", "Адрес", "Отзывы", "Рейтинг",
+        "Соцсети", "Время работы", "Источник", "Ссылка на картах"
+    ]
+    with open(output_path, mode="w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=headers, delimiter=";")
+        writer.writeheader()
+        writer.writerows(rows)
     return output_path
 
 
@@ -362,7 +369,10 @@ def export_freelance_to_csv(orders: List[FreelanceOrder], output_path: str = Non
             "Дата публикации": o.date_posted,
         })
 
-    df = pd.DataFrame(rows)
-    df.to_csv(output_path, index=False, encoding="utf-8-sig", sep=";")
+    headers = ["Биржа", "Название", "Бюджет", "Ссылка", "Описание", "Откликов", "Дата публикации"]
+    with open(output_path, mode="w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=headers, delimiter=";")
+        writer.writeheader()
+        writer.writerows(rows)
     return output_path
 

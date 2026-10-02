@@ -34,9 +34,12 @@ from scrapers.yandex import YandexScraper
 from scrapers.google import GoogleMapsScraper
 from scrapers.freelance import FreelanceAggregator, freelance_watcher
 
+STATE_LOCK = threading.Lock()
+
 # Global state for Maps Lead Search
 CURRENT_STATE = {
     "is_running": False,
+    "cancel_requested": False,
     "progress_message": "Готов к работе",
     "total_target": 0,
     "leads": [],
@@ -1846,18 +1849,23 @@ async def run_search_task(
             curr_limit = min(per_city_target, remaining_needed) if len(cities) > 1 else remaining_needed
 
             def on_lead(lead: Lead):
+                if CURRENT_STATE.get("cancel_requested"):
+                    return
                 key = (lead.name.lower().strip(), lead.primary_phone)
                 if key not in seen:
                     seen.add(key)
                     if not lead.ai_pitch:
                         enrich_lead_with_pitch(lead)
                     all_leads.append(lead)
-                    CURRENT_STATE["leads"].append(lead.model_dump())
-                    skip_text = f" (пропущено: {total_skipped})" if total_skipped > 0 else ""
-                    CURRENT_STATE["progress_message"] = f"{prefix}{city_label}: собрано {len(CURRENT_STATE['leads'])} из {limit}{skip_text}..."
+                    lead_dict = lead.model_dump()
+                    with STATE_LOCK:
+                        CURRENT_STATE["leads"].append(lead_dict)
+                        skip_text = f" (пропущено: {total_skipped})" if total_skipped > 0 else ""
+                        CURRENT_STATE["progress_message"] = f"{prefix}{city_label}: собрано {len(CURRENT_STATE['leads'])} из {limit}{skip_text}..."
 
             def on_progress(msg: str):
-                CURRENT_STATE["progress_message"] = f"{prefix}{city_label}: {msg}"
+                with STATE_LOCK:
+                    CURRENT_STATE["progress_message"] = f"{prefix}{city_label}: {msg}"
 
             # 1. Google Maps (USA / Europe / Worldwide)
             if source in ("google", "all") and len(all_leads) < limit:
@@ -2209,10 +2217,21 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(render_html_page().encode("utf-8"))
 
         elif path == "/api/status":
+            with STATE_LOCK:
+                payload = {
+                    "is_running": CURRENT_STATE["is_running"],
+                    "progress_message": CURRENT_STATE["progress_message"],
+                    "total_target": CURRENT_STATE["total_target"],
+                    "leads": list(CURRENT_STATE["leads"]),
+                    "last_excel_path": CURRENT_STATE["last_excel_path"],
+                    "last_csv_path": CURRENT_STATE["last_csv_path"],
+                    "skipped_count": CURRENT_STATE.get("skipped_count", 0),
+                    "memory_stats": memory_db.get_stats(),
+                }
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.end_headers()
-            self.wfile.write(json.dumps(CURRENT_STATE, ensure_ascii=False).encode("utf-8"))
+            self.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
 
         elif path == "/api/freelance/status":
             self.send_response(200)
@@ -2230,11 +2249,12 @@ class RequestHandler(BaseHTTPRequestHandler):
             query_params = urllib.parse.parse_qs(parsed.query)
             file_type = query_params.get("type", ["excel"])[0]
 
-            filepath = (
-                CURRENT_STATE["last_excel_path"]
-                if file_type == "excel"
-                else CURRENT_STATE["last_csv_path"]
-            )
+            with STATE_LOCK:
+                filepath = (
+                    CURRENT_STATE["last_excel_path"]
+                    if file_type == "excel"
+                    else CURRENT_STATE["last_csv_path"]
+                )
 
             if filepath and os.path.exists(filepath):
                 filename = os.path.basename(filepath)
@@ -2249,7 +2269,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{encoded_name}")
                 self.end_headers()
                 with open(filepath, "rb") as f:
-                    self.wfile.write(f.read())
+                    while True:
+                        chunk = f.read(65536)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -2278,7 +2302,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{encoded_name}")
                 self.end_headers()
                 with open(filepath, "rb") as f:
-                    self.wfile.write(f.read())
+                    while True:
+                        chunk = f.read(65536)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -2323,6 +2351,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 skip_checked = bool(data.get("skip_checked", True))
                 verify_web = bool(data.get("verify_web", True))
 
+                with STATE_LOCK:
+                    CURRENT_STATE["cancel_requested"] = False
+
                 start_async_task(query, city, source, filter_type, limit, skip_checked, verify_web)
 
                 self.send_response(200)
@@ -2334,6 +2365,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.end_headers()
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+
+        elif path == "/api/stop":
+            with STATE_LOCK:
+                CURRENT_STATE["is_running"] = False
+                CURRENT_STATE["cancel_requested"] = True
+                CURRENT_STATE["progress_message"] = "Остановлено пользователем."
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "stopped"}).encode("utf-8"))
 
         elif path == "/api/freelance/search":
             try:

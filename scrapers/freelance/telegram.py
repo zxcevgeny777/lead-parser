@@ -65,12 +65,18 @@ class TelegramScraper:
                 break
             try:
                 html = await loop.run_in_executor(None, _fetch_channel_html, ch)
-                # Extract posts: text, post url, post date
-                posts = re.findall(
-                    r'<div class="tgme_widget_message_wrap.*?<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>.*?<a class="tgme_widget_message_date" href="([^"]+)".*?<time datetime="([^"]+)"',
-                    html,
-                    re.DOTALL
-                )
+                # Split by message block to parse independently
+                raw_blocks = html.split('<div class="tgme_widget_message_wrap')
+                posts = []
+                for block in raw_blocks[1:]:
+                    text_match = re.search(r'<div class="tgme_widget_message_text[^"]*"[^>]*>(.*?)</div>', block, re.DOTALL)
+                    link_match = re.search(r'<a class="tgme_widget_message_date" href="([^"]+)"', block)
+                    date_match = re.search(r'<time datetime="([^"]+)"', block)
+                    if text_match and link_match:
+                        t_html = text_match.group(1)
+                        l_url = link_match.group(1)
+                        d_str = date_match.group(1) if date_match else ""
+                        posts.append((t_html, l_url, d_str))
 
                 # Iterate newest posts first
                 for text_html, link, date_str in reversed(posts):

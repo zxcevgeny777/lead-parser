@@ -25,7 +25,9 @@ class LeadsMemory:
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=20.0)
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -157,8 +159,8 @@ class LeadsMemory:
             phones_json = json.dumps(l.phones, ensure_ascii=False)
             norm_phone = self._normalize_phone(l.primary_phone)
 
-            status_val = l.website_status.value if hasattr(l.website_status, "value") else str(l.website_status)
-            priority_val = l.lead_priority.value if hasattr(l.lead_priority, "value") else str(l.lead_priority)
+            status_val = l.website_status.value if isinstance(l.website_status, WebsiteStatus) else str(l.website_status)
+            priority_val = l.lead_priority.value if isinstance(l.lead_priority, LeadPriority) else str(l.lead_priority)
 
             records.append((
                 org_id,

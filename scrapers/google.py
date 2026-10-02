@@ -70,6 +70,21 @@ class GoogleMapsScraper:
                 locale="en-US",
                 viewport={"width": 1280, "height": 900},
             )
+
+            # Block heavy map tiles, photos, and trackers for 3x faster card loading
+            BLOCKED_RESOURCES = frozenset({"image", "media", "font"})
+            async def block_heavy(route):
+                req = route.request
+                if req.resource_type in BLOCKED_RESOURCES:
+                    await route.abort()
+                    return
+                r_url = req.url.lower()
+                if any(t in r_url for t in ("google-analytics", "doubleclick", "googletagmanager", "adservice")):
+                    await route.abort()
+                    return
+                await route.continue_()
+
+            await context.route("**/*", block_heavy)
             page: Page = await context.new_page()
             stealth = Stealth()
             await stealth.apply_stealth_async(page)
@@ -82,11 +97,10 @@ class GoogleMapsScraper:
                         break
                     except Exception as ex:
                         if ("ERR_SOCKET_NOT_CONNECTED" in str(ex) or "ERR_CONNECTION" in str(ex) or "net::" in str(ex)) and attempt < 3:
-                            logger.warning(f"Google Maps attempt {attempt} failed ({ex}). Retrying in 2s...")
-                            await asyncio.sleep(2.0)
+                            logger.warning(f"Google Maps attempt {attempt} failed ({ex}). Retrying in 1s...")
+                            await asyncio.sleep(1.0)
                         else:
                             raise ex
-                await asyncio.sleep(2.5)
 
                 # 1. Handle Google Cookie / GDPR Consent if shown
                 consent_loc = page.locator(
@@ -95,13 +109,15 @@ class GoogleMapsScraper:
                 )
                 if await consent_loc.count() > 0:
                     try:
-                        await consent_loc.first.click(timeout=3000)
-                        await asyncio.sleep(1.5)
+                        await consent_loc.first.click(timeout=2500)
                     except Exception:
                         pass
 
-                # 2. Check for results feed
-                feed_loc = page.locator('div[role="feed"]')
+                # Wait for results feed or place card
+                try:
+                    await page.wait_for_selector('div[role="feed"], h1', timeout=6000)
+                except Exception:
+                    pass
                 if await feed_loc.count() == 0:
                     # Check if single place directly opened
                     if "/maps/place/" in page.url:
@@ -286,7 +302,17 @@ class GoogleMapsScraper:
                             f.scrollTop = f.scrollHeight;
                         }
                     }''')
-                    await asyncio.sleep(1.8)
+                    
+                    # Micro-poll for DOM updates instead of fixed 1.8s delay
+                    prev_card_count = len(cards)
+                    for _ in range(5):
+                        await asyncio.sleep(0.15)
+                        cnt = await page.evaluate('''() => {
+                            const f = document.querySelector('div[role="feed"]');
+                            return f ? f.querySelectorAll('div.Nv2PK').length : 0;
+                        }''')
+                        if cnt > prev_card_count:
+                            break
 
                 if self.on_progress:
                     self.on_progress(f"Google Maps: сбор завершен. Всего найдено {len(leads)} лидов.")

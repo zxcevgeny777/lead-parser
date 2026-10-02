@@ -33,6 +33,37 @@ def copy_to_clipboard(text: str):
         pass
 
 
+def kill_process_tree(proc):
+    """Kills process and all its children on Windows to avoid zombie processes."""
+    if not proc:
+        return
+    try:
+        if sys.platform == "win32":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        else:
+            proc.terminate()
+    except Exception:
+        pass
+
+
+def wait_for_port(port: int, host: str = "127.0.0.1", timeout: float = 6.0) -> bool:
+    """Waits until local server is actively listening on target port."""
+    import socket
+    start_t = time.time()
+    while time.time() - start_t < timeout:
+        try:
+            with socket.create_connection((host, port), timeout=0.3):
+                return True
+        except OSError:
+            time.sleep(0.15)
+    return False
+
+
 def start_tunnelmole(port: int = 8080):
     """Start Tunnelmole tunnel via npx (no 15-min limit, works with VPN/firewalls)."""
     try:
@@ -230,8 +261,9 @@ def main():
     server_thread = threading.Thread(target=run_web, kwargs={"port": port}, daemon=True)
     server_thread.start()
 
-    # Wait for server to bind port
-    time.sleep(2.0)
+    # Wait for server to bind port actively
+    if not wait_for_port(port, timeout=6.0):
+        print(f"  [!] Ошибка: порт {port} не отвечает. Проверьте, не запущен ли уже сервер.", flush=True)
 
     print("  [2/2] Создание защищенной публичной ссылки (без лимита)...", flush=True)
     tunnel_url, tunnel_proc, provider = start_tunnel(port=port)
@@ -273,11 +305,7 @@ def main():
         pass
     finally:
         print("\nОстановка сервера и туннеля...", flush=True)
-        if tunnel_proc:
-            try:
-                tunnel_proc.terminate()
-            except Exception:
-                pass
+        kill_process_tree(tunnel_proc)
         print("Работа завершена.", flush=True)
 
 

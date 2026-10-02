@@ -45,7 +45,7 @@ class YandexScraper(BaseScraper):
         self.skipped_checked_count: int = 0
 
     async def _scroll_results(self) -> bool:
-        """Scrolls the actual scroll container in Yandex Maps sidebar."""
+        """Scrolls the actual scroll container in Yandex Maps sidebar instantly."""
         if not self.page:
             return False
         try:
@@ -54,10 +54,10 @@ class YandexScraper(BaseScraper):
                                   document.querySelector('ul.search-list-view__list') ||
                                   document.querySelector('div[class*="search-list-view"]');
                 if (container) {
-                    container.scrollBy({ top: 1200, behavior: 'smooth' });
+                    container.scrollTop += 1400;
                     return true;
                 }
-                window.scrollBy({ top: 1200, behavior: 'smooth' });
+                window.scrollBy(0, 1400);
                 return false;
             }""")
         except Exception:
@@ -239,7 +239,10 @@ class YandexScraper(BaseScraper):
 
         try:
             await self.page.goto(target_url, wait_until="domcontentloaded", timeout=self.timeout)
-            await asyncio.sleep(3.5)
+            try:
+                await self.page.wait_for_selector("li.search-snippet-view, div.search-empty-view", timeout=7000)
+            except Exception:
+                pass
 
             scroll_attempts = 0
             max_scrolls = 30
@@ -330,7 +333,13 @@ class YandexScraper(BaseScraper):
 
                 # Scroll down results panel
                 await self._scroll_results()
-                await asyncio.sleep(1.3)
+                # Fast micro-poll for DOM snippets rendering
+                prev_snip_len = len(snippets)
+                for _ in range(4):
+                    await asyncio.sleep(0.15)
+                    curr_snips = await self.page.query_selector_all("li.search-snippet-view")
+                    if len(curr_snips) > prev_snip_len:
+                        break
 
                 if len(raw_items) == last_count:
                     unchanged_scrolls += 1

@@ -1,8 +1,11 @@
 """Freelance aggregator manager that orchestrates multi-exchange search."""
 import asyncio
+import logging
 from typing import List, Optional, Callable, Dict, Any
 
 from core.models import FreelanceOrder
+
+logger = logging.getLogger(__name__)
 from .filters import is_valid_web_task
 from .onliner import OnlinerScraper
 from .telegram import TelegramScraper
@@ -124,8 +127,7 @@ class FreelanceAggregator:
 
         for res in results:
             if isinstance(res, Exception):
-                safe_err = str(res).encode('ascii', 'replace').decode('ascii')
-                print(f"[FreelanceAggregator] Platform error: {safe_err}")
+                logger.warning(f"[FreelanceAggregator] Platform error: {res}")
             elif isinstance(res, list):
                 for order in res:
                     if order.url not in seen_urls:

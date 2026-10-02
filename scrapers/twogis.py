@@ -299,7 +299,10 @@ class TwoGisScraper(BaseScraper):
 
         try:
             await self.page.goto(target_url, wait_until="domcontentloaded", timeout=self.timeout)
-            await asyncio.sleep(3.0)
+            try:
+                await self.page.wait_for_selector('div[class*="_1g3w02m"], div[class*="sidebar"], div[class*="_awux"], div[class*="_j40qbp"]', timeout=5000)
+            except Exception:
+                pass
 
             # Check for captcha redirect
             if "captcha.2gis" in self.page.url:
@@ -324,8 +327,13 @@ class TwoGisScraper(BaseScraper):
             last_cnt = len(self.leads)
 
             while len(self.leads) < limit and scroll_attempts < max_scrolls:
-                await self.smooth_scroll_container('div[class*="_1g3w02m"], div[class*="sidebar"], div[class*="_awux"]', distance=600)
-                await asyncio.sleep(2.0)
+                await self.fast_scroll_container('div[class*="_1g3w02m"], div[class*="sidebar"], div[class*="_awux"]', distance=1500)
+                
+                # Dynamic poll until new leads arrive via API listener or timeout
+                for _ in range(6):
+                    if len(self.leads) > last_cnt:
+                        break
+                    await asyncio.sleep(0.15)
 
                 if len(self.leads) == last_cnt:
                     unchanged += 1
