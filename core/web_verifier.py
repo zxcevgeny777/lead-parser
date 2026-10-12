@@ -145,14 +145,37 @@ def check_domain_active_sync(domain: str) -> bool:
     except Exception:
         return False
 
+    import ssl
+    import urllib.error
+
+    ssl_ctx = ssl._create_unverified_context()
+    parked_markers = (
+        "domain is for sale", "buy this domain", "sedoparking", "hugedomains",
+        "домен продается", "срок регистрации домена истек", "reg.ru/domain/new",
+    )
+
     # Verify HTTP/HTTPS response
     for proto in ("https", "http"):
         try:
             url = f"{proto}://{domain}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-            with urllib.request.urlopen(req, timeout=3) as resp:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                },
+            )
+            ctx = ssl_ctx if proto == "https" else None
+            with urllib.request.urlopen(req, timeout=2.5, context=ctx) as resp:
                 if resp.status in (200, 301, 302, 307, 308):
+                    snippet = resp.read(4096).decode("utf-8", errors="ignore").lower()
+                    if any(pm in snippet for pm in parked_markers):
+                        return False
                     return True
+        except urllib.error.HTTPError as http_err:
+            # Cloudflare / DDoS-Guard / WAF on an active business site often returns 403, 401, 429, or 503
+            if http_err.code in (401, 403, 406, 429, 503):
+                return True
         except Exception:
             continue
     return False

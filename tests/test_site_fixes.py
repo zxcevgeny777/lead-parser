@@ -66,3 +66,55 @@ def test_ai_pitcher_for_booking_services():
     assert "онлайн-запись" in msg
     assert "https://dikidi.net" not in msg
     assert "Изучил ваш сайт https://dikidi.net" not in msg
+
+
+def test_unwrap_noisy_button_text_and_redirects():
+    from core.models import unwrap_and_clean_url
+
+    assert unwrap_and_clean_url("stroyka.by ↗") == "https://stroyka.by"
+    assert unwrap_and_clean_url("Перейти на сайт auto-service.ru") == "https://auto-service.ru"
+    assert unwrap_and_clean_url("https://link.2gis.ru/abc12345") is None
+    assert unwrap_and_clean_url("https://2gis.by/redirect/https://belstroy.by/catalog") == "https://belstroy.by/catalog"
+
+
+def test_twogis_shortlink_falls_back_to_text_domain():
+    from scrapers.twogis import TwoGisScraper
+
+    scraper = TwoGisScraper(headless=True)
+    item = {
+        "id": "70000001055555555",
+        "name": "СтройМастер Плюс",
+        "address_name": "ул. Притыцкого, 29",
+        "contact_groups": [
+            {
+                "contacts": [
+                    {"type": "phone", "value": "+375291112233"},
+                    {
+                        "type": "website",
+                        "url": "https://link.2gis.ru/987654321",
+                        "text": "stroymaster.by",
+                        "value": "http://link.2gis.ru/987654321",
+                    },
+                ]
+            }
+        ],
+    }
+    lead = scraper._parse_api_item(item, default_city="Минск")
+    assert lead is not None
+    assert lead.website == "https://stroymaster.by"
+    assert lead.website_status == WebsiteStatus.HAS_WEBSITE
+    assert lead.lead_priority == LeadPriority.LOW
+    scraper.filter_type = "hot_only"
+    assert scraper._is_qualifying(lead) is False
+    scraper.filter_type = "hot_warm"
+    assert scraper._is_qualifying(lead) is False
+
+
+def test_expanded_niches_catalog():
+    from core.niches import POPULAR_NICHES, QUICK_NICHES, QUICK_INTL_NICHES
+
+    assert len(POPULAR_NICHES) >= 75
+    assert len(QUICK_NICHES) >= 12
+    assert len(QUICK_INTL_NICHES) >= 12
+
+

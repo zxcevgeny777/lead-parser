@@ -28,7 +28,7 @@ from core.niches import (
     US_EU_HIGH_TICKET_NICHES, QUICK_INTL_NICHES, INTL_CITIES, BY_CITIES
 )
 from core.memory import memory_db
-from core.web_verifier import verify_company_website
+from core.web_verifier import verify_company_website, verify_company_website_sync
 from core.site_auditor import audit_lead_website
 from core.ai_pitcher import enrich_lead_with_pitch
 from core.notifier import load_settings, save_settings, send_telegram_alert
@@ -63,349 +63,698 @@ FREELANCE_STATE = {
 }
 
 HTML_TEMPLATE = """<!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-theme="obsidian">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Лид-Парсер | Поиск клиентов и заказов на разработку сайтов</title>
+    <title>LeadParser — Поиск клиентов и заказов</title>
     <style>
-        :root, [data-theme="dark"] {
-            --bg: #0f172a;
-            --surface: #1e293b;
-            --surface-hover: #334155;
-            --primary: #3b82f6;
-            --primary-hover: #2563eb;
-            --success: #10b981;
-            --warning: #f59e0b;
-            --text: #f8fafc;
-            --text-dim: #94a3b8;
-            --border: #334155;
-            --input-bg: #0f172a;
-            --header-gradient: linear-gradient(90deg, #60a5fa, #a855f7);
-        }
-        [data-theme="midnight"] {
-            --bg: #080c14;
-            --surface: #0f172a;
-            --surface-hover: #1e293b;
+        /* ==================== MINIMALIST COLOR THEMES ==================== */
+        :root, [data-theme="obsidian"], [data-theme="dark"] {
+            --bg: #09090b;
+            --surface: #121215;
+            --surface-hover: #1c1c21;
+            --surface-subtle: #16161a;
             --primary: #6366f1;
             --primary-hover: #4f46e5;
+            --primary-fg: #ffffff;
+            --accent-subtle: rgba(99, 102, 241, 0.12);
             --success: #10b981;
             --warning: #f59e0b;
-            --text: #f1f5f9;
-            --text-dim: #94a3b8;
-            --border: #1e293b;
-            --input-bg: #080c14;
-            --header-gradient: linear-gradient(90deg, #818cf8, #c084fc);
+            --danger: #ef4444;
+            --text: #fafafa;
+            --text-dim: #a1a1aa;
+            --text-muted: #71717a;
+            --border: #27272a;
+            --border-hover: #3f3f46;
+            --input-bg: #09090b;
+            --row-hover: rgba(255, 255, 255, 0.025);
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+            --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.7);
         }
-        [data-theme="emerald"] {
-            --bg: #04130d;
-            --surface: #09261a;
-            --surface-hover: #0f3827;
-            --primary: #10b981;
-            --primary-hover: #059669;
-            --success: #34d399;
-            --warning: #f59e0b;
-            --text: #ecfdf5;
-            --text-dim: #6ee7b7;
-            --border: #134e35;
-            --input-bg: #04130d;
-            --header-gradient: linear-gradient(90deg, #34d399, #10b981);
-        }
-        [data-theme="cyberpunk"] {
-            --bg: #11071f;
-            --surface: #1f0d36;
-            --surface-hover: #301654;
-            --primary: #d946ef;
-            --primary-hover: #c026d3;
-            --success: #06b6d4;
-            --warning: #facc15;
-            --text: #fdf4ff;
-            --text-dim: #d8b4fe;
-            --border: #441b77;
-            --input-bg: #11071f;
-            --header-gradient: linear-gradient(90deg, #f43f5e, #d946ef, #06b6d4);
-        }
-        [data-theme="light"] {
-            --bg: #f1f5f9;
+
+        [data-theme="paper"], [data-theme="light"] {
+            --bg: #fafafa;
             --surface: #ffffff;
-            --surface-hover: #f8fafc;
-            --primary: #2563eb;
-            --primary-hover: #1d4ed8;
+            --surface-hover: #f4f4f5;
+            --surface-subtle: #f4f4f5;
+            --primary: #18181b;
+            --primary-hover: #27272a;
+            --primary-fg: #ffffff;
+            --accent-subtle: rgba(24, 24, 27, 0.07);
             --success: #059669;
             --warning: #d97706;
-            --text: #0f172a;
-            --text-dim: #64748b;
-            --border: #cbd5e1;
+            --danger: #dc2626;
+            --text: #09090b;
+            --text-dim: #52525b;
+            --text-muted: #a1a1aa;
+            --border: #e4e4e7;
+            --border-hover: #d4d4d8;
             --input-bg: #ffffff;
-            --header-gradient: linear-gradient(90deg, #2563eb, #7c3aed);
+            --row-hover: rgba(0, 0, 0, 0.02);
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+            --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.12);
         }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        body { background: var(--bg); color: var(--text); padding: 24px; min-height: 100vh; transition: background 0.25s, color 0.25s; }
-        .container { max-width: 1400px; margin: 0 auto; }
-        header { margin-bottom: 20px; }
-        header h1 { font-size: 26px; font-weight: 800; background: var(--header-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        header p { color: var(--text-dim); margin-top: 6px; font-size: 14px; }
+        [data-theme="sand"] {
+            --bg: #f6f4ef;
+            --surface: #fcfbf8;
+            --surface-hover: #f0ece1;
+            --surface-subtle: #efeae0;
+            --primary: #b45309;
+            --primary-hover: #92400e;
+            --primary-fg: #ffffff;
+            --accent-subtle: rgba(180, 83, 9, 0.1);
+            --success: #047857;
+            --warning: #b45309;
+            --danger: #b91c1c;
+            --text: #1c1917;
+            --text-dim: #57534e;
+            --text-muted: #a8a29e;
+            --border: #e5e0d5;
+            --border-hover: #d6cfc2;
+            --input-bg: #ffffff;
+            --row-hover: rgba(28, 25, 23, 0.025);
+            --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.05);
+            --shadow-lg: 0 16px 36px -8px rgba(28, 25, 23, 0.14);
+        }
 
-        /* Top Navigation Tabs */
-        .tabs-nav {
+        [data-theme="nord"], [data-theme="midnight"] {
+            --bg: #0c1117;
+            --surface: #131a24;
+            --surface-hover: #1c2635;
+            --surface-subtle: #17202c;
+            --primary: #38bdf8;
+            --primary-hover: #0ea5e9;
+            --primary-fg: #082f49;
+            --accent-subtle: rgba(56, 189, 248, 0.12);
+            --success: #34d399;
+            --warning: #fbbf24;
+            --danger: #f87171;
+            --text: #f1f5f9;
+            --text-dim: #94a3b8;
+            --text-muted: #64748b;
+            --border: #1e293b;
+            --border-hover: #334155;
+            --input-bg: #0c1117;
+            --row-hover: rgba(56, 189, 248, 0.03);
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+            --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.7);
+        }
+
+        [data-theme="graphite"] {
+            --bg: #101010;
+            --surface: #171717;
+            --surface-hover: #222222;
+            --surface-subtle: #1c1c1c;
+            --primary: #e5e5e5;
+            --primary-hover: #ffffff;
+            --primary-fg: #0a0a0a;
+            --accent-subtle: rgba(255, 255, 255, 0.09);
+            --success: #22c55e;
+            --warning: #eab308;
+            --danger: #ef4444;
+            --text: #f5f5f5;
+            --text-dim: #a3a3a3;
+            --text-muted: #666666;
+            --border: #262626;
+            --border-hover: #383838;
+            --input-bg: #101010;
+            --row-hover: rgba(255, 255, 255, 0.025);
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+            --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.75);
+        }
+
+        [data-theme="tokyo"], [data-theme="cyberpunk"] {
+            --bg: #0f101a;
+            --surface: #161826;
+            --surface-hover: #1f2236;
+            --surface-subtle: #1a1c2e;
+            --primary: #7aa2f7;
+            --primary-hover: #5d8dee;
+            --primary-fg: #0d1117;
+            --accent-subtle: rgba(122, 162, 247, 0.14);
+            --success: #73daca;
+            --warning: #e0af68;
+            --danger: #f7768e;
+            --text: #c0caf5;
+            --text-dim: #7982a9;
+            --text-muted: #565f89;
+            --border: #24283b;
+            --border-hover: #3b4261;
+            --input-bg: #0f101a;
+            --row-hover: rgba(122, 162, 247, 0.03);
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+            --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.75);
+        }
+
+        [data-theme="emerald"] {
+            --bg: #060d0a;
+            --surface: #0b1611;
+            --surface-hover: #12241c;
+            --surface-subtle: #0e1c16;
+            --primary: #10b981;
+            --primary-hover: #059669;
+            --primary-fg: #022c22;
+            --accent-subtle: rgba(16, 185, 129, 0.14);
+            --success: #34d399;
+            --warning: #fbbf24;
+            --danger: #f87171;
+            --text: #ecfdf5;
+            --text-dim: #6ee7b7;
+            --text-muted: #34d399;
+            --border: #142e23;
+            --border-hover: #1f4736;
+            --input-bg: #060d0a;
+            --row-hover: rgba(16, 185, 129, 0.035);
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+            --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.75);
+        }
+
+        /* ==================== BASE & TYPOGRAPHY ==================== */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            padding: 24px 28px;
+            min-height: 100vh;
+            line-height: 1.45;
+            transition: background-color 180ms ease-out, color 180ms ease-out;
+        }
+        .container {
+            max-width: 1420px;
+            margin: 0 auto;
+        }
+
+        /* ==================== TOPBAR / HEADER ==================== */
+        header {
             display: flex;
-            gap: 10px;
-            margin-bottom: 22px;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+            padding-bottom: 18px;
+            margin-bottom: 20px;
             border-bottom: 1px solid var(--border);
-            padding-bottom: 12px;
+        }
+        .brand-wrap {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .brand-mark {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: var(--primary);
+            color: var(--primary-fg);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: 14px;
+            letter-spacing: -0.03em;
+        }
+        header h1 {
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: -0.025em;
+            color: var(--text);
+        }
+        header p {
+            color: var(--text-dim);
+            font-size: 12px;
+            margin-top: 2px;
+        }
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .control-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--surface);
+            padding: 5px 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--text-dim);
+        }
+        .theme-swatches {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .theme-dot {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            border: 1px solid rgba(128, 128, 128, 0.4);
+            cursor: pointer;
+            padding: 0;
+            transition: transform 140ms ease-out, border-color 140ms ease-out;
+        }
+        .theme-dot:hover {
+            transform: scale(1.18);
+            border-color: var(--text);
+        }
+        .theme-dot:active {
+            transform: scale(0.95);
+        }
+
+        /* ==================== NAVIGATION TABS ==================== */
+        .tabs-nav {
+            display: inline-flex;
+            gap: 4px;
+            margin-bottom: 20px;
+            background: var(--surface);
+            padding: 4px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
             flex-wrap: wrap;
         }
         .tab-btn {
-            background: var(--surface);
+            background: transparent;
             color: var(--text-dim);
-            border: 1px solid var(--border);
-            padding: 11px 22px;
-            border-radius: 10px;
-            font-size: 14px;
-            font-weight: 700;
+            border: 1px solid transparent;
+            padding: 8px 16px;
+            border-radius: 7px;
+            font-size: 13px;
+            font-weight: 600;
             cursor: pointer;
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            transition: all 0.2s;
+            transition: background-color 150ms ease-out, color 150ms ease-out, border-color 150ms ease-out, transform 120ms ease-out;
         }
         .tab-btn:hover {
-            background: var(--surface-hover);
             color: var(--text);
-            transform: translateY(-1px);
+            background: var(--surface-hover);
+        }
+        .tab-btn:active {
+            transform: scale(0.98);
         }
         .tab-btn.active {
-            background: var(--primary);
-            color: white;
-            border-color: var(--primary);
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35);
+            background: var(--bg);
+            color: var(--text);
+            border-color: var(--border);
+            box-shadow: var(--shadow-sm);
         }
         .tab-badge {
-            background: rgba(255, 255, 255, 0.22);
-            padding: 2px 8px;
-            border-radius: 10px;
+            background: var(--surface-hover);
+            color: var(--text-dim);
+            border: 1px solid var(--border);
+            padding: 1px 7px;
+            border-radius: 999px;
             font-size: 11px;
-            font-weight: 800;
+            font-weight: 500;
+        }
+        .tab-btn.active .tab-badge {
+            background: var(--accent-subtle);
+            color: var(--primary);
+            border-color: transparent;
         }
 
         .tab-content { display: none; }
         .tab-content.active { display: block; }
 
-        .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 22px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); transition: background 0.25s, border-color 0.25s; }
-        .grid-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; align-items: end; }
-        
-        label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text-dim); }
-        input, select { width: 100%; padding: 10px 14px; background: var(--input-bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 14px; outline: none; transition: border-color 0.2s, background 0.2s; }
-        input:focus, select:focus { border-color: var(--primary); }
+        /* ==================== SURFACES & FORMS ==================== */
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 16px;
+            box-shadow: var(--shadow-sm);
+            transition: background-color 180ms ease-out, border-color 180ms ease-out;
+        }
+        .grid-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            align-items: end;
+        }
+        label {
+            display: block;
+            font-size: 12px;
+            font-weight: 500;
+            margin-bottom: 6px;
+            color: var(--text-dim);
+        }
+        input, select {
+            width: 100%;
+            padding: 9px 12px;
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            color: var(--text);
+            font-size: 13px;
+            outline: none;
+            transition: border-color 150ms ease-out, background-color 150ms ease-out;
+        }
+        input:hover, select:hover {
+            border-color: var(--border-hover);
+        }
+        input:focus, select:focus {
+            border-color: var(--primary);
+        }
 
-        .btn { padding: 10px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; border: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 7px; transition: all 0.2s; text-decoration: none; }
-        .btn-primary { background: var(--primary); color: white; width: 100%; }
-        .btn-primary:hover { background: var(--primary-hover); }
-        .btn-success { background: var(--success); color: white; }
-        .btn-success:hover { filter: brightness(1.1); }
-        .btn-secondary { background: var(--surface-hover); color: var(--text); border: 1px solid var(--border); }
-        .btn-secondary:hover { filter: brightness(1.15); }
+        /* ==================== BUTTONS & CHIPS ==================== */
+        .btn {
+            padding: 9px 16px;
+            border-radius: 7px;
+            font-size: 13px;
+            font-weight: 600;
+            border: 1px solid transparent;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            text-decoration: none;
+            transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out, transform 120ms ease-out, opacity 150ms ease-out;
+        }
+        .btn:active:not(:disabled) {
+            transform: scale(0.98);
+        }
+        .btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        .btn-primary {
+            background: var(--primary);
+            color: var(--primary-fg);
+            width: 100%;
+        }
+        .btn-primary:hover:not(:disabled) {
+            background: var(--primary-hover);
+        }
+        .btn-success {
+            background: var(--success);
+            color: #ffffff;
+        }
+        .btn-success:hover:not(:disabled) {
+            opacity: 0.92;
+        }
+        .btn-secondary {
+            background: var(--surface-subtle);
+            color: var(--text);
+            border-color: var(--border);
+        }
+        .btn-secondary:hover:not(:disabled) {
+            background: var(--surface-hover);
+            border-color: var(--border-hover);
+        }
 
-        .stats-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 20px; }
-        .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; text-align: center; }
-        .stat-val { font-size: 24px; font-weight: 800; margin-top: 4px; }
-        .stat-label { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
-
-        .progress-box { margin-bottom: 20px; display: none; }
-        .progress-box.active { display: block; }
-        .progress-bar-bg { width: 100%; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin-top: 8px; }
-        .progress-bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--primary), var(--success)); transition: width 0.3s; }
-
-        .table-wrap { overflow-x: auto; max-height: 620px; border: 1px solid var(--border); border-radius: 8px; }
-        table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
-        th { background: var(--bg); padding: 12px 14px; font-weight: 600; color: var(--text-dim); position: sticky; top: 0; z-index: 10; border-bottom: 1px solid var(--border); }
-        td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-        tr:hover { background: rgba(255,255,255,0.03); }
-
-        .badge { display: inline-block; padding: 4px 9px; border-radius: 6px; font-size: 11px; font-weight: 700; white-space: nowrap; }
-        .badge-high { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
-        .badge-med { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); }
-        .badge-low { background: rgba(148, 163, 184, 0.15); color: var(--text-dim); border: 1px solid var(--border); }
-
-        /* Platform Badges */
-        .badge-onliner { background: rgba(234, 179, 8, 0.18); color: #facc15; border: 1px solid rgba(234, 179, 8, 0.4); }
-        .badge-kufar { background: rgba(20, 184, 166, 0.18); color: #2dd4bf; border: 1px solid rgba(20, 184, 166, 0.4); }
-        .badge-tg { background: rgba(56, 189, 248, 0.18); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); }
-        .badge-kwork { background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.35); }
-        .badge-fl { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.35); }
-        .badge-fh { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
-        .badge-wl { background: rgba(249, 115, 22, 0.15); color: #fb923c; border: 1px solid rgba(249, 115, 22, 0.35); }
-        .badge-price { background: rgba(34, 197, 94, 0.18); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4); font-size: 12px; font-weight: 800; }
-        
         .chip {
             background: var(--input-bg);
             border: 1px solid var(--border);
-            color: var(--text);
+            color: var(--text-dim);
             padding: 4px 10px;
-            border-radius: 16px;
+            border-radius: 6px;
             font-size: 12px;
+            font-weight: 500;
             cursor: pointer;
-            transition: all 0.2s;
             user-select: none;
+            transition: background-color 140ms ease-out, border-color 140ms ease-out, color 140ms ease-out, transform 120ms ease-out;
         }
         .chip:hover {
-            background: var(--primary);
-            border-color: var(--primary);
-            color: white;
-            transform: translateY(-1px);
+            background: var(--surface-hover);
+            border-color: var(--border-hover);
+            color: var(--text);
+        }
+        .chip:active {
+            transform: scale(0.97);
         }
         .chip-city {
             font-size: 11px;
             padding: 3px 8px;
-            border-radius: 6px;
         }
 
-        .badge-google { background: rgba(66, 133, 244, 0.2); color: #60a5fa; border: 1px solid rgba(66, 133, 244, 0.45); font-weight: 700; }
-        
+        /* ==================== REGION SEGMENTED TOGGLE ==================== */
         .region-toggle-wrap {
-            display: flex;
-            gap: 12px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 10px;
             margin-bottom: 16px;
-            flex-wrap: wrap;
         }
         .region-toggle-btn {
-            flex: 1;
-            min-width: 250px;
-            padding: 12px 18px;
-            border-radius: 10px;
-            border: 2px solid var(--border);
-            background: var(--surface);
+            padding: 10px 14px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--input-bg);
             color: var(--text-dim);
             cursor: pointer;
-            transition: all 0.2s ease;
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 10px;
             text-align: left;
+            transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out, transform 120ms ease-out;
         }
         .region-toggle-btn:hover {
-            border-color: var(--surface-hover);
-            filter: brightness(1.1);
+            border-color: var(--border-hover);
+            color: var(--text);
         }
-        .region-toggle-btn.active-us {
-            border-color: #38bdf8;
-            background: rgba(56, 189, 248, 0.12);
-            color: #38bdf8;
-            box-shadow: 0 0 15px rgba(56, 189, 248, 0.2);
+        .region-toggle-btn:active {
+            transform: scale(0.99);
         }
+        .region-toggle-btn.active-us,
         .region-toggle-btn.active-cis {
-            border-color: #10b981;
-            background: rgba(16, 185, 129, 0.12);
-            color: #10b981;
-            box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);
+            border-color: var(--primary);
+            background: var(--accent-subtle);
+            color: var(--text);
         }
 
-        /* Clickable organization link */
+        /* ==================== STATS & PROGRESS ==================== */
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .stat-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .stat-label {
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--text-dim);
+        }
+        .stat-val {
+            font-size: 22px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .progress-box { margin-bottom: 16px; display: none; }
+        .progress-box.active { display: block; }
+        .progress-bar-bg {
+            width: 100%;
+            height: 6px;
+            background: var(--border);
+            border-radius: 999px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+        .progress-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: var(--primary);
+            transition: width 250ms ease-out;
+        }
+
+        /* ==================== DATA TABLE ==================== */
+        .table-wrap {
+            overflow-x: auto;
+            max-height: 640px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 13px;
+            font-variant-numeric: tabular-nums;
+        }
+        th {
+            background: var(--surface-subtle);
+            padding: 10px 14px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--text-dim);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            border-bottom: 1px solid var(--border);
+        }
+        td {
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: middle;
+        }
+        tr:last-child td { border-bottom: none; }
+        tr:hover { background: var(--row-hover); }
+
+        /* ==================== BADGES & LINKS ==================== */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            white-space: nowrap;
+            border: 1px solid transparent;
+        }
+        .badge-high { background: rgba(16, 185, 129, 0.12); color: var(--success); border-color: rgba(16, 185, 129, 0.28); }
+        .badge-med { background: rgba(245, 158, 11, 0.12); color: var(--warning); border-color: rgba(245, 158, 11, 0.28); }
+        .badge-low { background: var(--surface-subtle); color: var(--text-dim); border-color: var(--border); }
+
+        .badge-onliner { background: rgba(234, 179, 8, 0.12); color: #eab308; border-color: rgba(234, 179, 8, 0.3); }
+        .badge-kufar { background: rgba(20, 184, 166, 0.12); color: #14b8a6; border-color: rgba(20, 184, 166, 0.3); }
+        .badge-tg { background: rgba(56, 189, 248, 0.12); color: #0ea5e9; border-color: rgba(56, 189, 248, 0.3); }
+        .badge-kwork { background: rgba(168, 85, 247, 0.12); color: #a855f7; border-color: rgba(168, 85, 247, 0.3); }
+        .badge-fl { background: rgba(59, 130, 246, 0.12); color: #3b82f6; border-color: rgba(59, 130, 246, 0.3); }
+        .badge-fh { background: rgba(16, 185, 129, 0.12); color: #10b981; border-color: rgba(16, 185, 129, 0.3); }
+        .badge-wl { background: rgba(249, 115, 22, 0.12); color: #f97316; border-color: rgba(249, 115, 22, 0.3); }
+        .badge-price { background: rgba(16, 185, 129, 0.12); color: var(--success); border-color: rgba(16, 185, 129, 0.3); font-weight: 700; }
+        .badge-google { background: var(--accent-subtle); color: var(--primary); border-color: var(--border); }
+
         a.org-link {
             color: var(--text);
             text-decoration: none;
-            font-weight: 700;
+            font-weight: 600;
             display: inline-flex;
             align-items: center;
             gap: 4px;
-            transition: color 0.15s;
+            transition: color 140ms ease-out;
         }
         a.org-link:hover {
             color: var(--primary);
-            text-decoration: underline;
         }
         a.org-link .link-icon {
             font-size: 11px;
-            opacity: 0.6;
-            color: var(--primary);
+            color: var(--text-dim);
         }
+        a.tel-link {
+            color: var(--text);
+            text-decoration: none;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+        a.tel-link:hover { color: var(--primary); }
+        a.site-link {
+            color: var(--text-dim);
+            text-decoration: none;
+            max-width: 170px;
+            display: inline-block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        a.site-link:hover { color: var(--text); text-decoration: underline; }
 
-        a.tel-link { color: #38bdf8; text-decoration: none; font-weight: 600; white-space: nowrap; }
-        a.tel-link:hover { text-decoration: underline; }
-        a.site-link { color: #818cf8; text-decoration: none; max-width: 170px; display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        a.site-link:hover { text-decoration: underline; }
-
-        /* Row action buttons */
+        /* ==================== ROW ACTIONS ==================== */
         .actions-cell {
             display: flex;
-            gap: 5px;
+            gap: 4px;
             align-items: center;
             white-space: nowrap;
         }
         .btn-act {
-            padding: 5px 8px;
+            padding: 4px 8px;
             border-radius: 6px;
             font-size: 11px;
-            font-weight: 600;
+            font-weight: 500;
             text-decoration: none;
             cursor: pointer;
             border: 1px solid var(--border);
-            background: var(--surface-hover);
+            background: var(--surface-subtle);
             color: var(--text);
             display: inline-flex;
             align-items: center;
-            gap: 3px;
-            transition: all 0.15s;
+            gap: 4px;
+            transition: background-color 140ms ease-out, border-color 140ms ease-out, color 140ms ease-out, transform 120ms ease-out;
         }
         .btn-act:hover {
-            filter: brightness(1.2);
-            transform: translateY(-1px);
+            background: var(--surface-hover);
+            border-color: var(--border-hover);
         }
-        .btn-act-vb { background: rgba(147, 51, 234, 0.18); border-color: rgba(147, 51, 234, 0.45); color: #c084fc; font-weight: 700; }
-        .btn-act-wa { background: rgba(37, 211, 102, 0.15); border-color: rgba(37, 211, 102, 0.4); color: #25d366; }
-        .btn-act-tg { background: rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.4); color: #38bdf8; }
-        .btn-act-map { background: rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.4); color: #f59e0b; }
-        .btn-act-proj { background: rgba(59, 130, 246, 0.15); border-color: rgba(59, 130, 246, 0.4); color: #60a5fa; font-weight: 700; }
+        .btn-act:active {
+            transform: scale(0.97);
+        }
+        .btn-act-vb { color: #a855f7; border-color: rgba(168, 85, 247, 0.3); }
+        .btn-act-wa { color: var(--success); border-color: rgba(16, 185, 129, 0.3); }
+        .btn-act-tg { color: #38bdf8; border-color: rgba(56, 189, 248, 0.3); }
+        .btn-act-map { color: var(--text-dim); }
+        .btn-act-proj { color: var(--primary); border-color: var(--border); font-weight: 600; }
         .btn-act-pitch {
-            background: linear-gradient(135deg, rgba(168, 85, 247, 0.22), rgba(59, 130, 246, 0.22));
-            border-color: rgba(168, 85, 247, 0.5);
-            color: #c084fc;
-            font-weight: 700;
+            background: var(--accent-subtle);
+            border-color: var(--border);
+            color: var(--text);
+            font-weight: 600;
         }
+
         .badge-mob {
-            background: rgba(16, 185, 129, 0.18);
-            color: #34d399;
-            border: 1px solid rgba(16, 185, 129, 0.4);
+            background: rgba(16, 185, 129, 0.12);
+            color: var(--success);
+            border: 1px solid rgba(16, 185, 129, 0.25);
             border-radius: 4px;
-            padding: 2px 5px;
-            font-size: 11px;
-            font-weight: 700;
-            display: inline-block;
-            margin-right: 4px;
+            padding: 1px 5px;
+            font-size: 10px;
+            font-weight: 600;
+            margin-right: 5px;
         }
         .badge-land {
-            background: rgba(148, 163, 184, 0.15);
-            color: #94a3b8;
-            border: 1px solid rgba(148, 163, 184, 0.3);
+            background: var(--surface-subtle);
+            color: var(--text-dim);
+            border: 1px solid var(--border);
             border-radius: 4px;
-            padding: 2px 5px;
-            font-size: 11px;
-            font-weight: 600;
-            display: inline-block;
-            margin-right: 4px;
+            padding: 1px 5px;
+            font-size: 10px;
+            font-weight: 500;
+            margin-right: 5px;
         }
         .audit-tag {
             display: inline-block;
             font-size: 10px;
-            font-weight: 800;
-            padding: 2px 6px;
+            font-weight: 600;
+            padding: 1px 6px;
             border-radius: 4px;
             margin-top: 3px;
             margin-right: 3px;
         }
-        .audit-no-mobile { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
-        .audit-ads { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }
-        .audit-no-ssl { background: rgba(244, 63, 94, 0.2); color: #fb7185; border: 1px solid rgba(244, 63, 94, 0.4); }
-        .audit-slow { background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); }
-        .audit-cms { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.35); }
+        .audit-no-mobile { background: rgba(239, 68, 68, 0.14); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+        .audit-ads { background: rgba(245, 158, 11, 0.14); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); }
+        .audit-no-ssl { background: rgba(244, 63, 94, 0.14); color: var(--danger); border: 1px solid rgba(244, 63, 94, 0.3); }
+        .audit-slow { background: rgba(168, 85, 247, 0.14); color: #a855f7; border: 1px solid rgba(168, 85, 247, 0.3); }
+        .audit-cms { background: var(--surface-subtle); color: var(--text-dim); border: 1px solid var(--border); }
 
-        /* Pitch Modal */
+        /* ==================== MODAL & TOAST ==================== */
         .modal-overlay {
             position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0, 0, 0, 0.75);
-            backdrop-filter: blur(4px);
+            inset: 0;
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(3px);
             z-index: 9999;
             display: none;
             align-items: center;
@@ -416,25 +765,40 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .modal-card {
             background: var(--surface);
             border: 1px solid var(--border);
-            border-radius: 14px;
-            max-width: 680px;
+            border-radius: 12px;
+            max-width: 640px;
             width: 100%;
             max-height: 90vh;
             overflow-y: auto;
             padding: 24px;
-            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5);
+            box-shadow: var(--shadow-lg);
             position: relative;
+            animation: modalIn 180ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        @keyframes modalIn {
+            from { opacity: 0; transform: scale(0.96) translateY(4px); }
+            to { opacity: 1; transform: scale(1) translateY(0); }
         }
         .modal-close {
             position: absolute;
-            top: 18px;
-            right: 18px;
-            background: none;
-            border: none;
+            top: 16px;
+            right: 16px;
+            background: var(--surface-subtle);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            width: 28px;
+            height: 28px;
             color: var(--text-dim);
-            font-size: 22px;
+            font-size: 16px;
             cursor: pointer;
-            line-height: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: background-color 140ms ease-out, color 140ms ease-out;
+        }
+        .modal-close:hover {
+            background: var(--surface-hover);
+            color: var(--text);
         }
         .pitch-box {
             background: var(--input-bg);
@@ -443,30 +807,30 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             padding: 12px 14px;
             margin-top: 6px;
             font-size: 13px;
-            line-height: 1.5;
+            line-height: 1.55;
             white-space: pre-wrap;
             color: var(--text);
             user-select: all;
         }
 
-        /* Toast notification */
         #toast {
             position: fixed;
             bottom: 24px;
             right: 24px;
-            background: #10b981;
-            color: white;
-            padding: 12px 20px;
+            background: var(--surface);
+            color: var(--text);
+            border: 1px solid var(--border);
+            padding: 10px 16px;
             border-radius: 8px;
-            font-weight: 600;
+            font-weight: 500;
             font-size: 13px;
-            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.3);
+            box-shadow: var(--shadow-lg);
             z-index: 1000;
             display: none;
-            animation: fadeIn 0.2s;
+            animation: toastIn 160ms cubic-bezier(0.22, 1, 0.36, 1);
         }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
+        @keyframes toastIn {
+            from { opacity: 0; transform: translateY(8px); }
             to { opacity: 1; transform: translateY(0); }
         }
     </style>
@@ -474,32 +838,43 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
     <div class="container">
         <header>
-            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+            <div class="brand-wrap">
+                <div class="brand-mark">LP</div>
                 <div>
-                    <h1>🚀 Лид-Парсер Pro: США, Европа, СНГ & Биржи</h1>
-                    <p>Поиск прямых клиентов на Google Maps ($1,500–$5,000+ чек), Яндекс/2ГИС и свежих заказов с фриланс-бирж и Telegram</p>
+                    <h1>LeadParser</h1>
+                    <p>Поиск бизнеса без сайтов (Google Maps, Яндекс, 2ГИС) и заказов с бирж</p>
                 </div>
-                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                    <!-- Theme Selector -->
-                    <div style="display: flex; align-items: center; gap: 6px; background: var(--surface); padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border);">
-                        <span style="font-size: 13px;">🎨</span>
-                        <select id="themeSelect" onchange="setTheme(this.value)" style="width: auto; padding: 4px 8px; font-size: 12px; border: none; background: transparent; cursor: pointer;">
-                            <option value="dark">🌙 Dark Tech</option>
-                            <option value="midnight">🌌 Midnight Blue</option>
-                            <option value="emerald">🌲 Emerald Matrix</option>
-                            <option value="cyberpunk">🔮 Cyberpunk</option>
-                            <option value="light">☀️ Clean Light</option>
-                        </select>
+            </div>
+            <div class="header-controls">
+                <!-- Quick Theme Swatches + Select -->
+                <div class="control-pill">
+                    <div class="theme-swatches" title="Быстрый выбор темы">
+                        <button type="button" class="theme-dot" style="background:#09090b;" onclick="setTheme('obsidian')" title="Obsidian Dark"></button>
+                        <button type="button" class="theme-dot" style="background:#ffffff;" onclick="setTheme('paper')" title="Pure Paper (Светлая)"></button>
+                        <button type="button" class="theme-dot" style="background:#e6dec8;" onclick="setTheme('sand')" title="Warm Sand (Теплая)"></button>
+                        <button type="button" class="theme-dot" style="background:#1e293b;" onclick="setTheme('nord')" title="Nordic Slate"></button>
+                        <button type="button" class="theme-dot" style="background:#262626;" onclick="setTheme('graphite')" title="Graphite Mono"></button>
+                        <button type="button" class="theme-dot" style="background:#24283b;" onclick="setTheme('tokyo')" title="Tokyo Night"></button>
+                        <button type="button" class="theme-dot" style="background:#064e3b;" onclick="setTheme('emerald')" title="Emerald Zen"></button>
                     </div>
+                    <select id="themeSelect" onchange="setTheme(this.value)" style="width: auto; padding: 2px 6px; font-size: 12px; border: none; background: transparent; cursor: pointer; color: var(--text);">
+                        <option value="obsidian">Obsidian Dark</option>
+                        <option value="paper">Pure Paper (Light)</option>
+                        <option value="sand">Warm Sand</option>
+                        <option value="nord">Nordic Slate</option>
+                        <option value="graphite">Graphite Mono</option>
+                        <option value="tokyo">Tokyo Night</option>
+                        <option value="emerald">Emerald Zen</option>
+                    </select>
+                </div>
 
-                    <!-- Memory Counter -->
-                    <div style="display: flex; align-items: center; gap: 8px; background: var(--surface); padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border);">
-                        <span style="font-size: 13px; color: var(--text-dim);">🧠 Память:</span>
-                        <span id="memCountBadge" style="font-weight: 700; color: #38bdf8; font-size: 13px;">0</span>
-                        <button type="button" onclick="clearMemory()" class="btn btn-secondary" style="padding: 3px 7px; font-size: 11px; margin-left: 2px;" title="Очистить историю проверенных мест">
-                            🗑 Сброс
-                        </button>
-                    </div>
+                <!-- Memory Counter -->
+                <div class="control-pill">
+                    <span>Память:</span>
+                    <strong id="memCountBadge" style="color: var(--text); font-variant-numeric: tabular-nums;">0</strong>
+                    <button type="button" onclick="clearMemory()" class="btn btn-secondary" style="padding: 2px 8px; font-size: 11px;" title="Очистить историю проверенных мест">
+                        Сброс
+                    </button>
                 </div>
             </div>
         </header>
@@ -507,16 +882,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <!-- Mode Switcher Tabs -->
         <div class="tabs-nav">
             <button type="button" class="tab-btn active" id="tabBtnMaps" onclick="switchTab('maps')">
-                <span>🗺️ Лиды на картах (Google Maps, Яндекс, 2ГИС)</span>
-                <span class="tab-badge" style="background: linear-gradient(90deg, #38bdf8, #818cf8); color: white;">🇺🇸 США • 🇪🇺 Европа • 🇧🇾 РБ</span>
+                <span>Карты и организации</span>
+                <span class="tab-badge">Google • Яндекс • 2ГИС</span>
             </button>
             <button type="button" class="tab-btn" id="tabBtnFreelance" onclick="switchTab('freelance')">
-                <span>💼 Заказы с бирж и Telegram</span>
-                <span class="tab-badge">🇧🇾 Onliner • Kufar • TG • Kwork</span>
+                <span>Биржи и Telegram</span>
+                <span class="tab-badge">Onliner • Kufar • Kwork</span>
             </button>
             <button type="button" class="tab-btn" id="tabBtnSettings" onclick="switchTab('settings')">
-                <span>⚙️ Настройки & Telegram-бот</span>
-                <span id="watcherActiveBadge" class="tab-badge" style="display:none; background:#10b981; color:white;">● Мониторинг ON</span>
+                <span>Настройки</span>
+                <span id="watcherActiveBadge" class="tab-badge" style="display:none; color: var(--success);">● Активен</span>
             </button>
         </div>
 
@@ -526,17 +901,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 <!-- Region Switcher -->
                 <div class="region-toggle-wrap">
                     <button type="button" id="regBtnUS" class="region-toggle-btn active-us" onclick="setRegion('us')">
-                        <span style="font-size: 22px;">🇺🇸 🇪🇺</span>
+                        <span style="font-size: 18px;">🇺🇸</span>
                         <div>
-                            <div style="font-size: 14px; font-weight: 800;">США & Западная Европа (Google Maps)</div>
-                            <div style="font-size: 11px; opacity: 0.85; font-weight: 500;">Чек $1,500 – $5,000+ • Высокомаржинальные ниши • 🟢 WhatsApp & Call</div>
+                            <div style="font-size: 13px; font-weight: 600; color: var(--text);">США и Европа (Google Maps)</div>
+                            <div style="font-size: 11px; color: var(--text-dim);">High-Ticket ниши • WhatsApp и прямые звонки</div>
                         </div>
                     </button>
                     <button type="button" id="regBtnCIS" class="region-toggle-btn" onclick="setRegion('cis')">
-                        <span style="font-size: 22px;">🇧🇾 🇷🇺</span>
+                        <span style="font-size: 18px;">🇧🇾</span>
                         <div>
-                            <div style="font-size: 14px; font-weight: 800;">Беларусь & СНГ (Яндекс + 2ГИС)</div>
-                            <div style="font-size: 11px; opacity: 0.85; font-weight: 500;">Чек $300 – $1,000 • Локальный бизнес • 🟣 Viber, WA & TG</div>
+                            <div style="font-size: 13px; font-weight: 600; color: var(--text);">Беларусь и СНГ (Яндекс + 2ГИС)</div>
+                            <div style="font-size: 11px; color: var(--text-dim);">Локальный бизнес • Viber, WhatsApp, Telegram</div>
                         </div>
                     </button>
                 </div>
@@ -544,15 +919,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 <form id="searchForm" onsubmit="startSearch(event)">
                     <div class="grid-form">
                         <div style="grid-column: span 2;">
-                            <label>Ниша / Поисковый запрос</label>
+                            <label>Ниша или поисковый запрос</label>
                             <div style="display: flex; gap: 8px;">
-                                <input type="text" id="query" list="nichesListUS" placeholder="например, Roofing Contractors или Dental Clinic" required value="Roofing Contractors">
-                                <select id="nicheSelectUS" onchange="if(this.value){setNiche(this.value);}" style="width: auto; max-width: 250px;">
-                                    <option value="">📂 Выбрать топ-нишу США/ЕС...</option>
+                                <input type="text" id="query" list="nichesListUS" placeholder="например, Roofing Contractors или Стоматология" required value="Roofing Contractors">
+                                <select id="nicheSelectUS" onchange="if(this.value){setNiche(this.value);}" style="width: auto; max-width: 240px;">
+                                    <option value="">Каталог ниш США/ЕС...</option>
                                     __US_NICHE_OPTIONS__
                                 </select>
-                                <select id="nicheSelectCIS" onchange="if(this.value){setNiche(this.value);}" style="width: auto; max-width: 250px; display: none;">
-                                    <option value="">📂 Выбрать нишу РБ/РФ...</option>
+                                <select id="nicheSelectCIS" onchange="if(this.value){setNiche(this.value);}" style="width: auto; max-width: 240px; display: none;">
+                                    <option value="">Каталог ниш РБ/СНГ...</option>
                                     __NICHE_OPTIONS__
                                 </select>
                             </div>
@@ -564,76 +939,74 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                             </datalist>
                         </div>
                         <div>
-                            <label>Город(а) поиска (можно несколько через запятую)</label>
-                            <input type="text" id="city" placeholder="например, Miami, FL или London" value="Miami, FL">
-                            <!-- US Cities -->
+                            <label>Город (или несколько через запятую)</label>
+                            <input type="text" id="city" placeholder="например, Miami, FL или Минск" value="Miami, FL">
                             <div id="cityChipsUS" style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;">
                                 __US_CITY_CHIPS__
                             </div>
-                            <!-- CIS Cities -->
                             <div id="cityChipsCIS" style="display: none; flex-wrap: wrap; gap: 4px; margin-top: 6px;">
                                 __BY_CITY_CHIPS__
                             </div>
                         </div>
                         <div>
-                            <label>Источник карт</label>
+                            <label>Источник</label>
                             <select id="source">
-                                <option value="all" selected>🌍 Все источники сразу (Google Maps + Яндекс + 2ГИС)</option>
-                                <option value="google">🇺🇸 🇪🇺 Google Maps (США, Европа, Весь мир)</option>
-                                <option value="both">🇧🇾 🇷🇺 Яндекс Карты + 2ГИС (РБ / СНГ)</option>
-                                <option value="yandex">Только Яндекс Карты</option>
-                                <option value="2gis">Только 2ГИС</option>
+                                <option value="all" selected>Все источники (Google + Яндекс + 2ГИС)</option>
+                                <option value="google">Google Maps</option>
+                                <option value="both">Яндекс Карты + 2ГИС</option>
+                                <option value="yandex">Яндекс Карты</option>
+                                <option value="2gis">2ГИС</option>
                             </select>
                         </div>
                         <div>
-                            <label>Фильтр лидов</label>
+                            <label>Фильтр сайтов</label>
                             <select id="filter">
-                                <option value="hot_warm" selected>🔥 Без сайта + ⚡ Соцсети / Taplink (Рекомендуется)</option>
-                                <option value="hot_only">🔥 Только БЕЗ САЙТА (100% строгий — нет сайтов)</option>
-                                <option value="social_only">⚡ Только соцсети / Taplink / Конструкторы</option>
-                                <option value="all">⚪ Все организации (горячие без сайта вверху)</option>
+                                <option value="hot_warm" selected>Без сайта + Соцсети / Taplink</option>
+                                <option value="hot_only">Строго без сайта (100% чистые)</option>
+                                <option value="social_only">Только соцсети / Taplink / Конструктор</option>
+                                <option value="all">Все организации</option>
                             </select>
                         </div>
                         <div>
-                            <label>Количество лидов</label>
+                            <label>Лимит</label>
                             <input type="number" id="limit" min="5" max="500" value="50">
                         </div>
                         <div>
                             <button type="submit" id="startBtn" class="btn btn-primary">
-                                <span>🚀 Начать сбор лидов</span>
+                                <span>Начать сбор</span>
                             </button>
                         </div>
                     </div>
 
-                    <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px;">
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; font-size: 13px; color: var(--text-dim);">
-                            <input type="checkbox" id="skipChecked" checked style="width: 16px; height: 16px; cursor: pointer; accent-color: var(--primary);">
-                            <span>🧠 <b>Не парсить уже проверенные места</b> (пропускать компании, которые уже есть в памяти)</span>
+                    <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 18px;">
+                        <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; font-size: 12px; color: var(--text-dim); margin: 0;">
+                            <input type="checkbox" id="skipChecked" checked style="width: 15px; height: 15px; cursor: pointer; accent-color: var(--primary);">
+                            <span>Пропускать ранее проверенные компании</span>
                         </label>
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; font-size: 13px; color: #38bdf8;">
-                            <input type="checkbox" id="verifyWeb" checked style="width: 16px; height: 16px; cursor: pointer; accent-color: #38bdf8;">
-                            <span>🌐 <b>Проверять наличие сайта в интернете по названию</b> (поиск домена и в поисковиках для 100% подтверждения)</span>
+                        <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; font-size: 12px; color: var(--text-dim); margin: 0;">
+                            <input type="checkbox" id="verifyWeb" checked style="width: 15px; height: 15px; cursor: pointer; accent-color: var(--primary);">
+                            <span>Проверять скрытые домены и поисковую выдачу (100% фильтр сайтов)</span>
                         </label>
                     </div>
 
                     <!-- US Niche Chips -->
                     <div id="nicheChipsUS" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; align-items: center;">
-                        <span style="font-size: 12px; color: #38bdf8; font-weight: 700;">🔥 Горячие ниши США/ЕС ($1.5k–$5k чек):</span>
+                        <span style="font-size: 11px; color: var(--text-dim); font-weight: 500;">Быстрый выбор:</span>
                         __US_NICHE_CHIPS__
                     </div>
 
                     <!-- CIS Niche Chips -->
                     <div id="nicheChipsCIS" style="display: none; flex-wrap: wrap; gap: 6px; margin-top: 12px; align-items: center;">
-                        <span style="font-size: 12px; color: #10b981; font-weight: 700;">💼 Высокочековые ниши РБ/РФ:</span>
+                        <span style="font-size: 11px; color: var(--text-dim); font-weight: 500;">Быстрый выбор:</span>
                         __NICHE_CHIPS__
                     </div>
                 </form>
             </div>
 
             <div class="progress-box" id="progressBox">
-                <div style="display: flex; justify-content: space-between; font-size: 14px;">
-                    <span id="progressMsg" style="color: var(--primary); font-weight: 600;">Сбор данных...</span>
-                    <span id="progressCount" style="color: var(--text-dim);">0 / 50</span>
+                <div style="display: flex; justify-content: space-between; font-size: 13px;">
+                    <span id="progressMsg" style="color: var(--text); font-weight: 500;">Сбор данных...</span>
+                    <span id="progressCount" style="color: var(--text-dim); font-variant-numeric: tabular-nums;">0 / 50</span>
                 </div>
                 <div class="progress-bar-bg">
                     <div class="progress-bar-fill" id="progressBar"></div>
@@ -642,39 +1015,39 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
             <div class="stats-bar">
                 <div class="stat-card">
-                    <div class="stat-label">Всего в базе</div>
-                    <div class="stat-val" id="statTotal" style="color: #38bdf8;">0</div>
+                    <div class="stat-label">Найдено компаний</div>
+                    <div class="stat-val" id="statTotal">0</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">🔥 Совсем нет сайта</div>
-                    <div class="stat-val" id="statHigh" style="color: #34d399;">0</div>
+                    <div class="stat-label">Без сайта (Горячие)</div>
+                    <div class="stat-val" id="statHigh" style="color: var(--success);">0</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">⚡ Только соцсеть/Taplink</div>
-                    <div class="stat-val" id="statMed" style="color: #fbbf24;">0</div>
+                    <div class="stat-label">Соцсети / Taplink</div>
+                    <div class="stat-val" id="statMed" style="color: var(--warning);">0</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">📞 С номерами телефонов</div>
-                    <div class="stat-val" id="statPhones" style="color: #a855f7;">0</div>
+                    <div class="stat-label">С телефоном</div>
+                    <div class="stat-val" id="statPhones">0</div>
                 </div>
             </div>
 
             <div class="card" style="padding: 16px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
                     <div>
-                        <h2 style="font-size: 18px; font-weight: 700;">Собранная база клиентов</h2>
+                        <h2 style="font-size: 15px; font-weight: 600;">Результаты поиска</h2>
                         <div id="tableCounter" style="font-size: 12px; color: var(--text-dim); margin-top: 2px;"></div>
                     </div>
                     <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                        <input type="text" id="tableFilterInput" placeholder="🔍 Быстрый поиск в таблице..." oninput="filterTable()" style="width: 230px; padding: 7px 12px; font-size: 13px;">
-                        <button onclick="copyAllPhones()" class="btn btn-secondary" id="btnCopyPhones" disabled title="Скопировать все найденные телефоны в буфер обмена">
-                            📋 Скопировать телефоны
+                        <input type="text" id="tableFilterInput" placeholder="Фильтр по таблице..." oninput="filterTable()" style="width: 220px; padding: 7px 11px; font-size: 12px;">
+                        <button onclick="copyAllPhones()" class="btn btn-secondary" id="btnCopyPhones" disabled title="Скопировать все телефоны">
+                            Копировать номера
                         </button>
                         <button onclick="downloadFile('excel')" class="btn btn-success" id="btnExcel" disabled>
-                            📥 Excel (.xlsx)
+                            Excel (.xlsx)
                         </button>
                         <button onclick="downloadFile('csv')" class="btn btn-secondary" id="btnCsv" disabled>
-                            📄 CSV
+                            CSV
                         </button>
                     </div>
                 </div>
@@ -683,21 +1056,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     <table>
                         <thead>
                             <tr>
-                                <th style="width: 45px;">№</th>
-                                <th style="width: 155px;">Статус сайта</th>
-                                <th>Компания (ссылка на карты)</th>
+                                <th style="width: 42px;">#</th>
+                                <th style="width: 145px;">Статус</th>
+                                <th>Организация</th>
                                 <th>Телефон</th>
-                                <th>Сайт / Ссылка</th>
-                                <th>Отзывы</th>
+                                <th>Сайт / Профиль</th>
+                                <th>Рейтинг</th>
                                 <th>Адрес</th>
                                 <th>Источник</th>
-                                <th style="width: 210px; text-align: center;">Быстрые действия (Viber / WA / TG)</th>
+                                <th style="width: 200px; text-align: right;">Действия</th>
                             </tr>
                         </thead>
                         <tbody id="leadsTableBody">
                             <tr>
                                 <td colspan="9" style="text-align: center; color: var(--text-dim); padding: 40px;">
-                                    Задайте параметры поиска и нажмите кнопку «Начать сбор лидов»
+                                    Выберите нишу, город и нажмите «Начать сбор»
                                 </td>
                             </tr>
                         </tbody>
@@ -716,67 +1089,67 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                             <input type="text" id="flQuery" placeholder="например, разработка сайта, лендинг, tilda, интернет-магазин" required value="разработка сайта">
                         </div>
                         <div>
-                            <label>Количество заказов</label>
+                            <label>Лимит заказов</label>
                             <input type="number" id="flLimit" min="10" max="200" value="50">
                         </div>
                         <div>
-                            <button type="submit" id="flStartBtn" class="btn btn-primary" style="background: linear-gradient(90deg, #6366f1, #a855f7);">
-                                <span>🚀 Найти заказы на биржах</span>
+                            <button type="submit" id="flStartBtn" class="btn btn-primary">
+                                <span>Найти заказы</span>
                             </button>
                         </div>
                     </div>
 
                     <!-- Platform Checkboxes -->
                     <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; align-items: center; flex-wrap: wrap; gap: 14px;">
-                        <span style="font-size: 13px; font-weight: 600; color: var(--text-dim);">Площадки:</span>
-                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-size: 13px;">
-                            <input type="checkbox" id="pfOnliner" checked style="width: 16px; height: 16px; accent-color: #facc15;">
-                            <span class="badge badge-onliner">🇧🇾 Onliner Услуги</span>
+                        <span style="font-size: 12px; font-weight: 500; color: var(--text-dim);">Площадки:</span>
+                        <label style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-size: 12px; margin: 0;">
+                            <input type="checkbox" id="pfOnliner" checked style="width: 15px; height: 15px; accent-color: var(--primary);">
+                            <span class="badge badge-onliner">Onliner Услуги</span>
                         </label>
-                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-size: 13px;">
-                            <input type="checkbox" id="pfTg" checked style="width: 16px; height: 16px; accent-color: #38bdf8;">
-                            <span class="badge badge-tg">✈️ Telegram (Свежие заказы)</span>
+                        <label style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-size: 12px; margin: 0;">
+                            <input type="checkbox" id="pfTg" checked style="width: 15px; height: 15px; accent-color: var(--primary);">
+                            <span class="badge badge-tg">Telegram</span>
                         </label>
-                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-size: 13px;" title="Только реальные запросы от заказчиков (предложения других студий отсекаются)">
-                            <input type="checkbox" id="pfKufar" style="width: 16px; height: 16px; accent-color: #2dd4bf;">
-                            <span class="badge badge-kufar">🇧🇾 Kufar (Только заказчики)</span>
+                        <label style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-size: 12px; margin: 0;">
+                            <input type="checkbox" id="pfKufar" style="width: 15px; height: 15px; accent-color: var(--primary);">
+                            <span class="badge badge-kufar">Kufar</span>
                         </label>
-                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-size: 13px;">
-                            <input type="checkbox" id="pfKwork" checked style="width: 16px; height: 16px; accent-color: #a855f7;">
-                            <span class="badge badge-kwork">Kwork (РБ)</span>
+                        <label style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-size: 12px; margin: 0;">
+                            <input type="checkbox" id="pfKwork" checked style="width: 15px; height: 15px; accent-color: var(--primary);">
+                            <span class="badge badge-kwork">Kwork</span>
                         </label>
-                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-size: 13px;">
-                            <input type="checkbox" id="pfFl" checked style="width: 16px; height: 16px; accent-color: #3b82f6;">
-                            <span class="badge badge-fl">FL.ru (РБ)</span>
+                        <label style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-size: 12px; margin: 0;">
+                            <input type="checkbox" id="pfFl" checked style="width: 15px; height: 15px; accent-color: var(--primary);">
+                            <span class="badge badge-fl">FL.ru</span>
                         </label>
-                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-size: 13px;">
-                            <input type="checkbox" id="pfFh" checked style="width: 16px; height: 16px; accent-color: #10b981;">
+                        <label style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; font-size: 12px; margin: 0;">
+                            <input type="checkbox" id="pfFh" checked style="width: 15px; height: 15px; accent-color: var(--primary);">
                             <span class="badge badge-fh">Freelancehunt</span>
                         </label>
                     </div>
 
                     <!-- Keyword Presets Chips -->
                     <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; align-items: center;">
-                        <span style="font-size: 12px; color: var(--text-dim); font-weight: 600;">Быстрые тематики:</span>
-                        <button type="button" class="chip" onclick="setFlQuery('разработка сайта под ключ')">🌐 Сайт под ключ</button>
-                        <button type="button" class="chip" onclick="setFlQuery('лендинг')">🚀 Лендинг пейдж</button>
-                        <button type="button" class="chip" onclick="setFlQuery('интернет-магазин')">🛒 Интернет-магазин</button>
-                        <button type="button" class="chip" onclick="setFlQuery('tilda')">🎨 Tilda / No-Code</button>
-                        <button type="button" class="chip" onclick="setFlQuery('доработка сайта')">🔧 Доработка сайта / Правки</button>
-                        <button type="button" class="chip" onclick="setFlQuery('верстка')">💻 Верстка / Frontend</button>
-                        <button type="button" class="chip" onclick="setFlQuery('wordpress')">📦 WordPress / CMS</button>
+                        <span style="font-size: 11px; color: var(--text-dim); font-weight: 500;">Тематики:</span>
+                        <button type="button" class="chip" onclick="setFlQuery('разработка сайта под ключ')">Сайт под ключ</button>
+                        <button type="button" class="chip" onclick="setFlQuery('лендинг')">Лендинг</button>
+                        <button type="button" class="chip" onclick="setFlQuery('интернет-магазин')">Интернет-магазин</button>
+                        <button type="button" class="chip" onclick="setFlQuery('tilda')">Tilda / No-Code</button>
+                        <button type="button" class="chip" onclick="setFlQuery('доработка сайта')">Доработка сайта</button>
+                        <button type="button" class="chip" onclick="setFlQuery('верстка')">Верстка / Frontend</button>
+                        <button type="button" class="chip" onclick="setFlQuery('wordpress')">WordPress</button>
                     </div>
                 </form>
             </div>
 
             <!-- Freelance Progress Box -->
             <div class="progress-box" id="flProgressBox">
-                <div style="display: flex; justify-content: space-between; font-size: 14px;">
-                    <span id="flProgressMsg" style="color: #818cf8; font-weight: 600;">Поиск заказов...</span>
+                <div style="display: flex; justify-content: space-between; font-size: 13px;">
+                    <span id="flProgressMsg" style="color: var(--text); font-weight: 500;">Поиск заказов...</span>
                     <span id="flProgressCount" style="color: var(--text-dim);">0 / 50</span>
                 </div>
                 <div class="progress-bar-bg">
-                    <div class="progress-bar-fill" id="flProgressBar" style="background: linear-gradient(90deg, #6366f1, #10b981);"></div>
+                    <div class="progress-bar-fill" id="flProgressBar"></div>
                 </div>
             </div>
 
@@ -784,36 +1157,36 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             <div class="stats-bar">
                 <div class="stat-card">
                     <div class="stat-label">Всего заказов</div>
-                    <div class="stat-val" id="statFlTotal" style="color: #38bdf8;">0</div>
+                    <div class="stat-val" id="statFlTotal">0</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">💰 С указанным бюджетом</div>
-                    <div class="stat-val" id="statFlPriced" style="color: #34d399;">0</div>
+                    <div class="stat-label">С указанным бюджетом</div>
+                    <div class="stat-val" id="statFlPriced" style="color: var(--success);">0</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">🇧🇾 Беларусь (Onliner / Kufar)</div>
-                    <div class="stat-val" id="statFlBy" style="color: #facc15;">0</div>
+                    <div class="stat-label">Беларусь (Onliner / Kufar)</div>
+                    <div class="stat-val" id="statFlBy" style="color: var(--warning);">0</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">✈️ Telegram & Биржи</div>
-                    <div class="stat-val" id="statFlTg" style="color: #c084fc;">0</div>
+                    <div class="stat-label">Telegram и биржи</div>
+                    <div class="stat-val" id="statFlTg">0</div>
                 </div>
             </div>
 
             <!-- Freelance Table Card -->
             <div class="card" style="padding: 16px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
                     <div>
-                        <h2 style="font-size: 18px; font-weight: 700;">Свежие заказы с бирж и каналов</h2>
+                        <h2 style="font-size: 15px; font-weight: 600;">Свежие заказы</h2>
                         <div id="flTableCounter" style="font-size: 12px; color: var(--text-dim); margin-top: 2px;"></div>
                     </div>
                     <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                        <input type="text" id="flTableFilterInput" placeholder="🔍 Быстрый поиск в заказах..." oninput="filterFreelanceTable()" style="width: 240px; padding: 7px 12px; font-size: 13px;">
+                        <input type="text" id="flTableFilterInput" placeholder="Фильтр по заказам..." oninput="filterFreelanceTable()" style="width: 220px; padding: 7px 11px; font-size: 12px;">
                         <button onclick="downloadFreelance('excel')" class="btn btn-success" id="btnFlExcel" disabled>
-                            📥 Excel (.xlsx)
+                            Excel (.xlsx)
                         </button>
                         <button onclick="downloadFreelance('csv')" class="btn btn-secondary" id="btnFlCsv" disabled>
-                            📄 CSV
+                            CSV
                         </button>
                     </div>
                 </div>
@@ -822,18 +1195,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     <table>
                         <thead>
                             <tr>
-                                <th style="width: 45px;">№</th>
-                                <th style="width: 160px;">Платформа</th>
-                                <th>Заказ / Название проекта</th>
-                                <th style="width: 170px;">Бюджет</th>
-                                <th>Отклики / Время</th>
-                                <th style="width: 190px; text-align: center;">Действия</th>
+                                <th style="width: 42px;">#</th>
+                                <th style="width: 140px;">Площадка</th>
+                                <th>Заказ</th>
+                                <th style="width: 160px;">Бюджет</th>
+                                <th>Инфо</th>
+                                <th style="width: 170px; text-align: right;">Действия</th>
                             </tr>
                         </thead>
                         <tbody id="freelanceTableBody">
                             <tr>
                                 <td colspan="6" style="text-align: center; color: var(--text-dim); padding: 40px;">
-                                    Выберите тематику и нажмите кнопку «Найти заказы на биржах»
+                                    Выберите тематику и нажмите «Найти заказы»
                                 </td>
                             </tr>
                         </tbody>
@@ -845,72 +1218,70 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <!-- ================= TAB 3: SETTINGS & MONITORING ================= -->
         <div id="tabContentSettings" class="tab-content">
             <div class="card">
-                <h2 style="font-size: 18px; font-weight: 700; margin-bottom: 6px;">🤖 Telegram-бот & Фоновый мониторинг бирж</h2>
-                <p style="color: var(--text-dim); font-size: 13px; margin-bottom: 20px;">
-                    Настройте мгновенные алерты в ваш личный Telegram или рабочий канал при появлении новых заказов на разработку сайтов (Onliner Услуги, Kwork, FL.ru).
+                <h2 style="font-size: 16px; font-weight: 600; margin-bottom: 4px;">Telegram-уведомления и мониторинг</h2>
+                <p style="color: var(--text-dim); font-size: 12px; margin-bottom: 18px;">
+                    Мгновенные уведомления в Telegram при появлении новых заказов на разработку сайтов.
                 </p>
 
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin-bottom: 22px;">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-bottom: 16px;">
                     <div>
                         <label>Telegram Bot Token</label>
-                        <input type="text" id="cfgBotToken" placeholder="например, 7123456789:AAH_..." style="font-family: monospace; font-size: 13px;">
-                        <span style="font-size: 11px; color: var(--text-dim); margin-top: 4px; display: block;">Создайте бота у @BotFather в Telegram за 1 минуту</span>
+                        <input type="text" id="cfgBotToken" placeholder="7123456789:AAH_..." style="font-family: monospace; font-size: 12px;">
                     </div>
                     <div>
-                        <label>Telegram Chat ID (ваш ID или ID канала)</label>
-                        <input type="text" id="cfgChatId" placeholder="например, 123456789 или @my_channel" style="font-family: monospace; font-size: 13px;">
-                        <span style="font-size: 11px; color: var(--text-dim); margin-top: 4px; display: block;">Узнать свой ID можно через бота @userinfobot</span>
+                        <label>Telegram Chat ID</label>
+                        <input type="text" id="cfgChatId" placeholder="123456789 или @channel" style="font-family: monospace; font-size: 12px;">
                     </div>
                 </div>
 
-                <div style="margin-bottom: 20px;">
-                    <button type="button" onclick="testTelegramAlert()" class="btn btn-secondary" style="padding: 8px 16px;">
-                        🔔 Отправить тестовое сообщение в Telegram
+                <div style="margin-bottom: 18px;">
+                    <button type="button" onclick="testTelegramAlert()" class="btn btn-secondary">
+                        Отправить тестовое сообщение
                     </button>
-                    <span id="testTgStatus" style="margin-left: 10px; font-size: 13px; font-weight: 600;"></span>
+                    <span id="testTgStatus" style="margin-left: 10px; font-size: 12px; font-weight: 500;"></span>
                 </div>
 
-                <hr style="border: none; border-top: 1px solid var(--border); margin: 20px 0;">
+                <hr style="border: none; border-top: 1px solid var(--border); margin: 18px 0;">
 
-                <h3 style="font-size: 15px; font-weight: 700; margin-bottom: 12px;">⚡ Фоновый авто-мониторинг Onliner & бирж</h3>
+                <h3 style="font-size: 14px; font-weight: 600; margin-bottom: 10px;">Фоновый авто-мониторинг</h3>
                 
-                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-                    <button type="button" id="btnToggleWatcher" onclick="toggleWatcher()" class="btn btn-primary" style="width: auto; padding: 10px 22px;">
-                        ▶️ Запустить фоновый мониторинг
+                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 14px;">
+                    <button type="button" id="btnToggleWatcher" onclick="toggleWatcher()" class="btn btn-primary" style="width: auto;">
+                        Запустить мониторинг
                     </button>
-                    <span id="watcherStatusText" style="font-size: 13px; color: var(--text-dim);">Статус: Остановлен</span>
+                    <span id="watcherStatusText" style="font-size: 12px; color: var(--text-dim);">Статус: Остановлен</span>
                 </div>
 
-                <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 20px;">
-                    <label style="display: flex; align-items: center; gap: 8px; font-weight: 500; cursor: pointer;">
-                        <input type="checkbox" id="cfgNotifyOnliner" checked style="width: auto;"> 🇧🇾 Onliner Услуги (Беларусь)
+                <div style="display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 16px;">
+                    <label style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer; margin: 0;">
+                        <input type="checkbox" id="cfgNotifyOnliner" checked style="width: auto;"> Onliner Услуги
                     </label>
-                    <label style="display: flex; align-items: center; gap: 8px; font-weight: 500; cursor: pointer;">
-                        <input type="checkbox" id="cfgNotifyKwork" checked style="width: auto;"> ⚡ Kwork
+                    <label style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer; margin: 0;">
+                        <input type="checkbox" id="cfgNotifyKwork" checked style="width: auto;"> Kwork
                     </label>
-                    <label style="display: flex; align-items: center; gap: 8px; font-weight: 500; cursor: pointer;">
-                        <input type="checkbox" id="cfgNotifyFl" checked style="width: auto;"> 🌐 FL.ru
+                    <label style="display: inline-flex; align-items: center; gap: 6px; cursor: pointer; margin: 0;">
+                        <input type="checkbox" id="cfgNotifyFl" checked style="width: auto;"> FL.ru
                     </label>
                 </div>
 
-                <div style="max-width: 250px; margin-bottom: 22px;">
-                    <label>Интервал проверки (минут)</label>
+                <div style="max-width: 220px; margin-bottom: 18px;">
+                    <label>Интервал проверки (мин)</label>
                     <input type="number" id="cfgInterval" min="1" max="60" value="3">
                 </div>
 
-                <hr style="border: none; border-top: 1px solid var(--border); margin: 20px 0;">
+                <hr style="border: none; border-top: 1px solid var(--border); margin: 18px 0;">
 
-                <h3 style="font-size: 15px; font-weight: 700; margin-bottom: 6px;">🧠 Google Gemini API (Опционально)</h3>
-                <p style="color: var(--text-dim); font-size: 12px; margin-bottom: 12px;">
-                    По умолчанию парсер использует встроенный умный генератор офферов. Если вы укажете ключ Gemini API, питчи будут генерироваться через нейросеть индивидуально под каждый бизнес.
+                <h3 style="font-size: 14px; font-weight: 600; margin-bottom: 4px;">Google Gemini API (Опционально)</h3>
+                <p style="color: var(--text-dim); font-size: 12px; margin-bottom: 10px;">
+                    Офферы формируются автоматически встроенным генератором. Укажите ключ Gemini, если нужна генерация через LLM.
                 </p>
-                <div style="max-width: 500px; margin-bottom: 22px;">
+                <div style="max-width: 420px; margin-bottom: 18px;">
                     <label>Gemini API Key</label>
                     <input type="password" id="cfgGeminiKey" placeholder="AIzaSy..." style="font-family: monospace;">
                 </div>
 
-                <button type="button" onclick="saveSettingsForm()" class="btn btn-success" style="padding: 10px 24px;">
-                    💾 Сохранить настройки
+                <button type="button" onclick="saveSettingsForm()" class="btn btn-success">
+                    Сохранить настройки
                 </button>
             </div>
         </div>
@@ -921,46 +1292,35 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="pitchModal" class="modal-overlay" onclick="if(event.target===this)closePitchModal()">
         <div class="modal-card">
             <button type="button" class="modal-close" onclick="closePitchModal()">&times;</button>
-            
-            <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; color: #34d399; display: flex; align-items: center; gap: 10px;">
-                <span style="font-size: 20px;">⚡</span>
-                <div>
-                    <strong>API подключать не требуется!</strong> Все продающие офферы и скрипты звонков формируются автоматически бесплатно на основе данных об организации.
-                </div>
+
+            <div style="margin-bottom: 14px;">
+                <h2 id="modalOrgName" style="font-size: 16px; font-weight: 600;">Название компании</h2>
+                <div id="modalOrgMeta" style="font-size: 12px; color: var(--text-dim); margin-top: 2px;">Город • Ниша</div>
             </div>
 
-            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 14px;">
-                <span style="font-size: 26px;">💡</span>
-                <div>
-                    <h2 id="modalOrgName" style="font-size: 18px; font-weight: 800;">Название компании</h2>
-                    <div id="modalOrgMeta" style="font-size: 12px; color: var(--text-dim);">Город • Ниша</div>
-                </div>
-            </div>
-
-            <!-- Audit badges if present -->
-            <div id="modalAuditBadges" style="margin-bottom: 16px;"></div>
+            <div id="modalAuditBadges" style="margin-bottom: 14px;"></div>
 
             <!-- WhatsApp / Telegram Pitch -->
-            <div style="margin-bottom: 20px;">
+            <div style="margin-bottom: 18px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                    <label style="margin: 0; font-weight: 700; color: #38bdf8;">💬 Персональное сообщение в мессенджер (WhatsApp / TG / Viber)</label>
+                    <label style="margin: 0; font-weight: 600; color: var(--text);">Персональный оффер (WhatsApp / Telegram / Viber)</label>
                     <button type="button" onclick="copyModalPitch()" class="btn btn-secondary" style="padding: 3px 10px; font-size: 11px;">
-                        📋 Скопировать
+                        Копировать
                     </button>
                 </div>
                 <div id="modalPitchText" class="pitch-box"></div>
                 <div style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
-                    <a id="modalBtnWA" href="#" target="_blank" class="btn btn-act-wa" style="text-decoration: none; padding: 7px 14px; font-size: 12px;">🟢 Открыть в WhatsApp с этим текстом</a>
-                    <a id="modalBtnTG" href="#" target="_blank" class="btn btn-act-tg" style="text-decoration: none; padding: 7px 14px; font-size: 12px;">💬 Открыть в Telegram</a>
+                    <a id="modalBtnWA" href="#" target="_blank" class="btn btn-act-wa" style="text-decoration: none; padding: 6px 12px; font-size: 12px;">Открыть в WhatsApp</a>
+                    <a id="modalBtnTG" href="#" target="_blank" class="btn btn-act-tg" style="text-decoration: none; padding: 6px 12px; font-size: 12px;">Открыть в Telegram</a>
                 </div>
             </div>
 
             <!-- Cold Call Script -->
             <div>
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                    <label style="margin: 0; font-weight: 700; color: #a855f7;">📞 Скрипт 30-секундного звонка руководителю</label>
+                    <label style="margin: 0; font-weight: 600; color: var(--text);">Скрипт звонка (30 сек)</label>
                     <button type="button" onclick="copyModalCall()" class="btn btn-secondary" style="padding: 3px 10px; font-size: 11px;">
-                        📋 Скопировать
+                        Копировать
                     </button>
                 </div>
                 <div id="modalCallText" class="pitch-box"></div>
@@ -1216,7 +1576,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             e.preventDefault();
             const btn = document.getElementById('startBtn');
             btn.disabled = true;
-            btn.innerHTML = '<span>⏳ Сбор запущен...</span>';
+            btn.innerHTML = '<span>Сбор запущен...</span>';
             
             document.getElementById('progressBox').classList.add('active');
             document.getElementById('btnExcel').disabled = true;
@@ -1278,7 +1638,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 if (!data.is_running && count > 0) {
                     clearInterval(pollTimer);
                     document.getElementById('startBtn').disabled = false;
-                    document.getElementById('startBtn').innerHTML = '<span>🚀 Начать новый сбор</span>';
+                    document.getElementById('startBtn').innerHTML = '<span>Начать сбор</span>';
                     document.getElementById('btnExcel').disabled = false;
                     document.getElementById('btnCsv').disabled = false;
                     document.getElementById('btnCopyPhones').disabled = false;
@@ -1286,7 +1646,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 } else if (!data.is_running && count === 0) {
                     clearInterval(pollTimer);
                     document.getElementById('startBtn').disabled = false;
-                    document.getElementById('startBtn').innerHTML = '<span>🚀 Начать новый сбор</span>';
+                    document.getElementById('startBtn').innerHTML = '<span>Начать сбор</span>';
                 }
             } catch (err) {
                 console.error(err);
@@ -1298,7 +1658,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             e.preventDefault();
             const btn = document.getElementById('flStartBtn');
             btn.disabled = true;
-            btn.innerHTML = '<span>⏳ Поиск на биржах...</span>';
+            btn.innerHTML = '<span>Поиск на биржах...</span>';
 
             document.getElementById('flProgressBox').classList.add('active');
             document.getElementById('btnFlExcel').disabled = true;
@@ -1315,7 +1675,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             if (platforms.length === 0) {
                 alert('Выберите хотя бы одну платформу для поиска!');
                 btn.disabled = false;
-                btn.innerHTML = '<span>🚀 Найти заказы на биржах</span>';
+                btn.innerHTML = '<span>Найти заказы</span>';
                 return;
             }
 
@@ -1365,13 +1725,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 if (!data.is_running && count > 0) {
                     clearInterval(flPollTimer);
                     document.getElementById('flStartBtn').disabled = false;
-                    document.getElementById('flStartBtn').innerHTML = '<span>🚀 Новый поиск на биржах</span>';
+                    document.getElementById('flStartBtn').innerHTML = '<span>Найти заказы</span>';
                     document.getElementById('btnFlExcel').disabled = false;
                     document.getElementById('btnFlCsv').disabled = false;
                 } else if (!data.is_running && count === 0) {
                     clearInterval(flPollTimer);
                     document.getElementById('flStartBtn').disabled = false;
-                    document.getElementById('flStartBtn').innerHTML = '<span>🚀 Новый поиск на биржах</span>';
+                    document.getElementById('flStartBtn').innerHTML = '<span>Найти заказы</span>';
                 }
             } catch (err) {
                 console.error(err);
@@ -1380,8 +1740,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
         window.addEventListener('DOMContentLoaded', () => {
             try {
-                const savedTheme = localStorage.getItem('lead_theme') || 'dark';
-                setTheme(savedTheme);
+                const legacyMap = { dark: 'obsidian', light: 'paper', midnight: 'nord', cyberpunk: 'tokyo' };
+                const rawTheme = localStorage.getItem('lead_theme') || 'obsidian';
+                setTheme(legacyMap[rawTheme] || rawTheme);
                 const savedTab = localStorage.getItem('lead_active_tab') || 'maps';
                 switchTab(savedTab);
                 const savedReg = localStorage.getItem('lead_region') || 'us';
@@ -1421,7 +1782,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
             if (btnCopy) btnCopy.disabled = false;
             if (counter) {
-                counter.innerText = isFiltered ? `Показано ${leads.length} из ${allLeads.length}` : `Всего в таблице: ${leads.length}`;
+                counter.innerText = isFiltered ? `Показано ${leads.length} из ${allLeads.length}` : `Всего: ${leads.length}`;
             }
 
             let html = '';
@@ -1429,45 +1790,41 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 const isInvalidSite = !l.website || ['yandex.', 'ya.ru', 'ya.by', 'google.', '2gis.', 'maps/org', 'clck/'].some(ign => l.website.toLowerCase().includes(ign));
                 let siteStr = !isInvalidSite 
                     ? `<a class="site-link" href="${l.website}" target="_blank" title="${escapeHtml(l.website)}">${escapeHtml(l.website)}</a>` 
-                    : '<span style="color: #10b981; font-weight: 700;">Отсутствует</span>';
+                    : '<span style="color: var(--success); font-weight: 500; font-size: 12px;">Нет сайта</span>';
 
                 let badgeClass = 'badge-low';
                 let statusVal = l.website_status || '';
-                let badgeText = '⚪ Есть свой сайт';
+                let badgeText = 'Есть сайт';
 
                 if (statusVal.includes('Нет сайта') || isInvalidSite) {
                     badgeClass = 'badge-high';
-                    badgeText = '🔥 НЕТ САЙТА';
+                    badgeText = 'Нет сайта';
                 } else if (statusVal.includes('Taplink') || (l.website && (l.website.includes('dikidi') || l.website.includes('yclients')))) {
                     badgeClass = 'badge-med';
-                    badgeText = '⚡ Онлайн-запись / Taplink';
+                    badgeText = 'Taplink / Запись';
                 } else if (statusVal.includes('Конструктор')) {
                     badgeClass = 'badge-med';
-                    badgeText = '💡 Конструктор';
+                    badgeText = 'Конструктор';
                 } else if (statusVal.includes('соцсеть')) {
                     badgeClass = 'badge-med';
-                    badgeText = '⚡ Только соцсеть';
-                } else {
-                    badgeClass = 'badge-low';
-                    badgeText = '⚪ Есть свой сайт';
+                    badgeText = 'Соцсеть';
                 }
 
                 const primaryPhone = (l.phones && l.phones.length > 0) ? l.phones[0] : '';
                 const cleanDigits = primaryPhone.replace(/\D/g, '');
                 const mobBadge = l.is_mobile 
-                    ? '<span class="badge-mob" title="Мобильный номер - доступен в WhatsApp и Telegram">📱 Моб.</span>'
-                    : (primaryPhone ? '<span class="badge-land" title="Городской стационарный номер">☎️ Гор.</span>' : '');
+                    ? '<span class="badge-mob" title="Мобильный номер">Моб</span>'
+                    : (primaryPhone ? '<span class="badge-land" title="Городской номер">Гор</span>' : '');
                 const phoneStr = primaryPhone 
                     ? `<div style="display: flex; align-items: center; white-space: nowrap;">${mobBadge}<a class="tel-link" href="tel:${primaryPhone}" title="Позвонить">${primaryPhone}</a></div>` 
                     : '<span style="color: var(--text-dim);">—</span>';
 
-                // Clickable company name opening map card
                 const nameStr = l.map_url 
-                    ? `<a href="${l.map_url}" target="_blank" class="org-link" title="Открыть карточку организации на картах">${escapeHtml(l.name)} <span class="link-icon">↗</span></a>`
-                    : `<span style="font-weight: 700;">${escapeHtml(l.name)}</span>`;
+                    ? `<a href="${l.map_url}" target="_blank" class="org-link" title="Открыть карточку на карте">${escapeHtml(l.name)} <span class="link-icon">↗</span></a>`
+                    : `<span style="font-weight: 600;">${escapeHtml(l.name)}</span>`;
 
                 if (l.notes && l.notes.includes('100%')) {
-                    siteStr += `<div style="font-size: 11px; color: #34d399; margin-top: 2px;">✅ Проверено в сети</div>`;
+                    siteStr += `<div style="font-size: 10px; color: var(--text-dim); margin-top: 2px;">Проверено в поиске</div>`;
                 }
 
                 if (!isInvalidSite && l.site_audit_summary) {
@@ -1484,59 +1841,51 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 }
 
                 const reviews = (l.rating !== null && l.rating !== undefined) 
-                    ? `⭐ ${l.rating} (${l.reviews_count || 0})` 
+                    ? `${l.rating} <span style="color: var(--text-dim);">(${l.reviews_count || 0})</span>` 
                     : '<span style="color: var(--text-dim);">—</span>';
 
                 const fullAddr = [l.city, l.address].filter(Boolean).join(', ');
 
-                // Determine whether this lead is from CIS or International
                 const isCis = (l.is_cis !== undefined) ? l.is_cis : (l.source !== 'Google Maps');
                 const primaryDigits = l.clean_phone_digits || cleanDigits;
 
-                // Quick action buttons: AI-Pitch + Viber/WA/TG for CIS, or WhatsApp + Call for US/EU
-                let actHtml = `<div class="actions-cell">`;
-                actHtml += `<button onclick="openPitchModal(${idx})" class="btn-act btn-act-pitch" style="font-weight: 700; background: linear-gradient(135deg, rgba(245, 158, 11, 0.25), rgba(234, 88, 12, 0.25)); border-color: rgba(245, 158, 11, 0.6); color: #fbbf24;" title="💡 Открыть готовый продающий оффер и скрипт звонка на 30 сек">💡 Текст оффера (AI)</button>`;
+                let actHtml = `<div class="actions-cell" style="justify-content: flex-end;">`;
+                actHtml += `<button onclick="openPitchModal(${idx})" class="btn-act btn-act-pitch" title="Открыть оффер и скрипт звонка">Оффер</button>`;
 
-                if (l.map_url) {
-                    actHtml += `<a href="${l.map_url}" target="_blank" class="btn-act btn-act-map" title="Открыть на карте">🗺️</a>`;
-                }
                 if (primaryPhone) {
                     if (isCis) {
-                        // Belarus / CIS: Viber, WhatsApp with pitch, Telegram
                         const vbLink = l.viber_url || `viber://chat?number=%2B${primaryDigits}`;
-                        actHtml += `<a href="${vbLink}" target="_blank" class="btn-act btn-act-vb" title="Написать в Viber">🟣 Viber</a>`;
+                        actHtml += `<a href="${vbLink}" target="_blank" class="btn-act btn-act-vb" title="Viber">Viber</a>`;
 
                         const pitchText = l.ai_pitch || `Здравствуйте! Нашли организацию "${l.name}" на картах. Подскажите, пожалуйста, вы принимаете заказы?`;
                         const waText = encodeURIComponent(pitchText);
-                        actHtml += `<a href="https://wa.me/${primaryDigits}?text=${waText}" target="_blank" class="btn-act btn-act-wa" title="Написать в WhatsApp с готовым питчем">🟢 WA</a>`;
+                        actHtml += `<a href="https://wa.me/${primaryDigits}?text=${waText}" target="_blank" class="btn-act btn-act-wa" title="WhatsApp">WA</a>`;
 
                         const tgUrl = l.telegram_url || (l.social_links && l.social_links.telegram) || `https://t.me/+${primaryDigits}`;
-                        actHtml += `<a href="${tgUrl}" target="_blank" class="btn-act btn-act-tg" title="Открыть в Telegram">💬 TG</a>`;
+                        actHtml += `<a href="${tgUrl}" target="_blank" class="btn-act btn-act-tg" title="Telegram">TG</a>`;
                     } else {
-                        // US / Europe: WhatsApp with English pitch + Direct Call
                         const enPitch = encodeURIComponent(l.ai_pitch || `Hi! I noticed your business "${l.name}" on Google Maps. We specialize in building high-converting websites. Are you open to new clients?`);
-                        actHtml += `<a href="https://wa.me/${primaryDigits}?text=${enPitch}" target="_blank" class="btn-act btn-act-wa" style="font-weight: 700; padding: 4px 10px;" title="Send WhatsApp Message">🟢 WA</a>`;
-                        actHtml += `<a href="tel:${primaryPhone}" class="btn-act" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4);" title="Direct Call">📞 Call</a>`;
+                        actHtml += `<a href="https://wa.me/${primaryDigits}?text=${enPitch}" target="_blank" class="btn-act btn-act-wa" title="Send WhatsApp Message">WA</a>`;
+                        actHtml += `<a href="tel:${primaryPhone}" class="btn-act" title="Direct Call">Call</a>`;
                     }
 
-                    // Copy Phone
-                    actHtml += `<button onclick="copyPhone('${primaryPhone}')" class="btn-act" title="Скопировать номер телефона">📋</button>`;
+                    actHtml += `<button onclick="copyPhone('${primaryPhone}')" class="btn-act" title="Скопировать номер">Копия</button>`;
                 }
                 actHtml += `</div>`;
 
-                let srcBadge = `<span style="font-size: 11px; padding: 2px 6px; background: var(--surface-hover); border: 1px solid var(--border); border-radius: 4px; white-space: nowrap;">${l.source}</span>`;
+                let srcBadge = `<span class="badge badge-low">${l.source}</span>`;
                 if (l.source === 'Google Maps') {
-                    srcBadge = `<span class="badge badge-google">Google Maps</span>`;
+                    srcBadge = `<span class="badge badge-google">Google</span>`;
                 }
 
                 html += `<tr>
-                    <td style="color: var(--text-dim); text-align: center;">${idx + 1}</td>
+                    <td style="color: var(--text-dim);">${idx + 1}</td>
                     <td><span class="badge ${badgeClass}">${badgeText}</span></td>
                     <td>${nameStr}</td>
                     <td>${phoneStr}</td>
                     <td>${siteStr}</td>
-                    <td style="text-align: center; white-space: nowrap;">${reviews}</td>
-                    <td style="color: var(--text-dim); font-size: 12px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(fullAddr)}">${escapeHtml(fullAddr || '—')}</td>
+                    <td style="white-space: nowrap;">${reviews}</td>
+                    <td style="color: var(--text-dim); font-size: 12px; max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(fullAddr)}">${escapeHtml(fullAddr || '—')}</td>
                     <td>${srcBadge}</td>
                     <td>${actHtml}</td>
                 </tr>`;
@@ -1863,6 +2212,21 @@ async def run_search_task(
             def on_lead(lead: Lead):
                 if CURRENT_STATE.get("cancel_requested"):
                     return
+                if verify_web and (not lead.website or lead.website_status in (WebsiteStatus.NO_WEBSITE, WebsiteStatus.TAPLINK)):
+                    try:
+                        has_site, detected_site = verify_company_website_sync(lead.name, lead.city)
+                        if has_site and detected_site:
+                            st, pr = classify_website(detected_site)
+                            if st != WebsiteStatus.NO_WEBSITE:
+                                lead.website = detected_site
+                                lead.website_status = st
+                                lead.lead_priority = pr
+                                lead.notes = f"🌐 Найден сайт в поиске: {detected_site}"
+                                memory_db.save_lead(lead)
+                        else:
+                            lead.notes = "✅ 100% подтверждено поиском: сайта в интернете нет"
+                    except Exception:
+                        pass
                 if not is_qualifying_lead(lead):
                     return
                 key = (lead.name.lower().strip(), lead.primary_phone)

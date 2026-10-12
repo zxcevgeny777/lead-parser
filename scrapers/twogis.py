@@ -145,7 +145,11 @@ class TwoGisScraper(BaseScraper):
                         if phone_val and phone_val not in phones:
                             phones.append(phone_val)
                     elif c_type in ("website", "url", "site", "link"):
-                        site_url = unwrap_and_clean_url(c_url or c_text or c_value)
+                        site_url = (
+                            unwrap_and_clean_url(c_url)
+                            or unwrap_and_clean_url(c_text)
+                            or unwrap_and_clean_url(c_value)
+                        )
                         if site_url:
                             website = site_url
                     elif "vk" in c_type:
@@ -217,8 +221,11 @@ class TwoGisScraper(BaseScraper):
                 pass
 
     async def _parse_dom_cards(self, city: str, limit: int):
-        """Extracts visible business cards from DOM."""
+        """Extracts visible business cards from DOM only when unfiltered (all leads mode),
+        since raw DOM snippets do not expose whether an organization has a website."""
         if not self.page:
+            return
+        if self.filter_no_website_only or self.filter_type in ("hot_only", "hot_warm", "social_only"):
             return
         try:
             cards = await self.page.query_selector_all('a[href*="/firm/"], div[class*="_1hf7139"]')

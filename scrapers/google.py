@@ -182,8 +182,11 @@ class GoogleMapsScraper:
                     }''')
 
                     new_in_pass = 0
+                    candidates_to_check = []
+                    detail_sem = asyncio.Semaphore(4)
+
                     for c in cards:
-                        if len(leads) >= limit or not self.is_running:
+                        if not self.is_running:
                             break
 
                         place_url = c.get("link", "")
@@ -198,99 +201,146 @@ class GoogleMapsScraper:
                         if skip_checked and memory_db.is_checked(url=place_url, name=name, city=city):
                             continue
 
-                        raw_text = c.get("raw_text", "")
                         raw_website = unwrap_and_clean_url(c.get("website", "").strip())
+                        website_status, _ = classify_website(raw_website)
 
-                        # Extract phone number via regex from card text
-                        phone_match = re.search(
-                            r'(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3}[-.\s]?\d{4}',
-                            raw_text
-                        )
-                        phones = [format_phone(phone_match.group(0).strip())] if phone_match else []
-
-                        # Extract category and address from lines
-                        lines = c.get("lines", [])
-                        category = query
-                        address = city
-
-                        # Lines usually: [Name, Name, Rating(Reviews), Category · Address, Open hours · Phone]
-                        for line in lines[2:]:
-                            parts = [p.strip() for p in line.split("·") if p.strip()]
-                            for p_part in parts:
-                                if not phone_match or p_part != phone_match.group(0):
-                                    if any(w in p_part.lower() for w in ["open", "closed", "24 hours", "am", "pm"]):
-                                        continue
-                                    if len(p_part) > 3 and not re.search(r'\d{3}[-.\s]?\d{4}', p_part):
-                                        if not category or category == query:
-                                            category = p_part
-                                        elif not address or address == city:
-                                            address = f"{p_part}, {city}"
-
-                        # Rating and reviews
-                        rating_val = None
-                        try:
-                            if c.get("rating"):
-                                rating_val = float(c["rating"].replace(",", "."))
-                        except Exception:
-                            pass
-
-                        reviews_val = None
-                        try:
-                            if c.get("reviews"):
-                                clean_rev = re.sub(r'\D', '', c["reviews"])
-                                if clean_rev:
-                                    reviews_val = int(clean_rev)
-                        except Exception:
-                            pass
-
-                        # Determine website status & priority
-                        website_status, priority = classify_website(raw_website)
-
-                        # Filter by user preference
-                        if filter_type == "hot_only" and (website_status != WebsiteStatus.NO_WEBSITE or raw_website):
-                            continue
-                        elif filter_type == "social_only" and website_status not in (WebsiteStatus.SOCIAL, WebsiteStatus.TAPLINK, WebsiteStatus.BUILDER):
-                            continue
-                        elif filter_type == "hot_warm" and (website_status == WebsiteStatus.HAS_WEBSITE or (raw_website and website_status not in (WebsiteStatus.SOCIAL, WebsiteStatus.TAPLINK, WebsiteStatus.BUILDER))):
+                        # Fast pre-filter: if feed snippet already shows an official website, skip immediately without opening tab
+                        if website_status == WebsiteStatus.HAS_WEBSITE and filter_type in ("hot_only", "hot_warm", "social_only"):
                             continue
 
-                        # Web verification check if requested and marked as NO_WEBSITE
-                        if verify_web and website_status == WebsiteStatus.NO_WEBSITE:
+                        candidates_to_check.append((c, raw_website))
+
+                    # Process candidates in parallel chunks of 4 to verify hidden websites in compact cards
+                    chunk_size = 4
+                    for idx in range(0, len(candidates_to_check), chunk_size):
+                        if len(leads) >= limit or not self.is_running:
+                            break
+
+                        batch = candidates_to_check[idx:idx + chunk_size]
+                        detail_tasks = [
+                            self._enrich_place_detail(context, detail_sem, item_c.get("link", ""))
+                            if not init_web or classify_website(init_web)[0] != WebsiteStatus.HAS_WEBSITE
+                            else asyncio.sleep(0, result={})
+                            for item_c, init_web in batch
+                        ]
+                        detail_results = await asyncio.gather(*detail_tasks)
+
+                        for (c, raw_website), detail_info in zip(batch, detail_results):
+                            if len(leads) >= limit or not self.is_running:
+                                break
+
+                            place_url = c.get("link", "")
+                            name = c.get("name", "").strip()
+                            raw_text = c.get("raw_text", "")
+
+                            # If detail card revealed an official authority website, use it!
+                            detail_site = unwrap_and_clean_url((detail_info or {}).get("website", ""))
+                            if detail_site:
+                                d_status, _ = classify_website(detail_site)
+                                if d_status == WebsiteStatus.HAS_WEBSITE or not raw_website:
+                                    raw_website = detail_site
+
+                            # Extract phone number from detail card or fallback to snippet regex
+                            phones = []
+                            detail_phone = (detail_info or {}).get("phone", "")
+                            if detail_phone:
+                                clean_p = re.sub(r"[^\d+()-\s]", "", detail_phone).strip()
+                                if clean_p:
+                                    phones.append(format_phone(clean_p, city_hint=city))
+                            if not phones:
+                                phone_match = re.search(
+                                    r'(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3}[-.\s]?\d{4}',
+                                    raw_text
+                                )
+                                if phone_match:
+                                    phones.append(format_phone(phone_match.group(0).strip(), city_hint=city))
+
+                            # Extract category and address from lines
+                            lines = c.get("lines", [])
+                            category = query
+                            address = (detail_info or {}).get("address", "") or city
+                            phone_match_str = re.search(
+                                r'(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3}[-.\s]?\d{4}',
+                                raw_text
+                            )
+
+                            for line in lines[2:]:
+                                parts = [p.strip() for p in line.split("·") if p.strip()]
+                                for p_part in parts:
+                                    if not phone_match_str or p_part != phone_match_str.group(0):
+                                        if any(w in p_part.lower() for w in ["open", "closed", "24 hours", "am", "pm"]):
+                                            continue
+                                        if len(p_part) > 3 and not re.search(r'\d{3}[-.\s]?\d{4}', p_part):
+                                            if not category or category == query:
+                                                category = p_part
+                                            elif address == city:
+                                                address = f"{p_part}, {city}"
+
+                            # Rating and reviews
+                            rating_val = None
                             try:
-                                has_site, detected_site = await verify_company_website(name, city)
-                                if has_site and detected_site:
-                                    if filter_type in ("hot_only", "hot_warm"):
-                                        continue
-                                    website_status = WebsiteStatus.HAS_WEBSITE
-                                    priority = LeadPriority.LOW
-                                    raw_website = detected_site
+                                if c.get("rating"):
+                                    rating_val = float(c["rating"].replace(",", "."))
                             except Exception:
                                 pass
 
-                        lead = Lead(
-                            name=name,
-                            source="Google Maps",
-                            category=category,
-                            city=city,
-                            address=address,
-                            phones=phones,
-                            website=raw_website if raw_website else None,
-                            website_status=website_status,
-                            lead_priority=priority,
-                            rating=rating_val,
-                            reviews_count=reviews_val,
-                            map_url=place_url,
-                        )
+                            reviews_val = None
+                            try:
+                                if c.get("reviews"):
+                                    clean_rev = re.sub(r'\D', '', c["reviews"])
+                                    if clean_rev:
+                                        reviews_val = int(clean_rev)
+                            except Exception:
+                                pass
 
-                        # Save to memory
-                        memory_db.save_lead(lead)
+                            # Determine website status & priority after detail verification
+                            website_status, priority = classify_website(raw_website)
 
-                        leads.append(lead)
-                        if self.on_lead_found:
-                            self.on_lead_found(lead)
+                            # Filter by user preference
+                            if filter_type == "hot_only" and (website_status != WebsiteStatus.NO_WEBSITE or raw_website):
+                                continue
+                            elif filter_type == "social_only" and website_status not in (WebsiteStatus.SOCIAL, WebsiteStatus.TAPLINK, WebsiteStatus.BUILDER):
+                                continue
+                            elif filter_type == "hot_warm" and (website_status == WebsiteStatus.HAS_WEBSITE or (raw_website and website_status not in (WebsiteStatus.SOCIAL, WebsiteStatus.TAPLINK, WebsiteStatus.BUILDER))):
+                                continue
 
-                        if self.on_progress:
-                            self.on_progress(f"Google Maps ({city}): найдено {len(leads)}/{limit} лидов...")
+                            # Web verification check if requested and marked as NO_WEBSITE
+                            if verify_web and website_status == WebsiteStatus.NO_WEBSITE:
+                                try:
+                                    has_site, detected_site = await verify_company_website(name, city)
+                                    if has_site and detected_site:
+                                        if filter_type in ("hot_only", "hot_warm"):
+                                            continue
+                                        website_status = WebsiteStatus.HAS_WEBSITE
+                                        priority = LeadPriority.LOW
+                                        raw_website = detected_site
+                                except Exception:
+                                    pass
+
+                            lead = Lead(
+                                name=name,
+                                source="Google Maps",
+                                category=category,
+                                city=city,
+                                address=address,
+                                phones=phones,
+                                website=raw_website if raw_website else None,
+                                website_status=website_status,
+                                lead_priority=priority,
+                                rating=rating_val,
+                                reviews_count=reviews_val,
+                                map_url=place_url,
+                            )
+
+                            # Save to memory
+                            memory_db.save_lead(lead)
+
+                            leads.append(lead)
+                            if self.on_lead_found:
+                                self.on_lead_found(lead)
+
+                            if self.on_progress:
+                                self.on_progress(f"Google Maps ({city}): найдено {len(leads)}/{limit} лидов...")
 
                     if new_in_pass == 0:
                         consecutive_no_new += 1
@@ -334,6 +384,57 @@ class GoogleMapsScraper:
                 await browser.close()
 
         return leads
+
+    async def _enrich_place_detail(
+        self, context: BrowserContext, sem: asyncio.Semaphore, place_url: str
+    ) -> Dict[str, str]:
+        """Opens a Google Maps place URL in a lightweight tab to verify official website (a[data-item-id="authority"]) and phone."""
+        if not place_url:
+            return {}
+        detail_page: Optional[Page] = None
+        try:
+            async with sem:
+                detail_page = await context.new_page()
+                detail_page.set_default_timeout(10000)
+                await detail_page.goto(place_url, wait_until="domcontentloaded", timeout=10000)
+                try:
+                    await detail_page.wait_for_selector(
+                        'a[data-item-id="authority"], button[data-item-id^="phone:"], button[data-item-id="address"]',
+                        timeout=2500,
+                    )
+                except Exception:
+                    pass
+                info = await detail_page.evaluate('''() => {
+                    const authEl = document.querySelector(
+                        'a[data-item-id="authority"], ' +
+                        'a[data-value="Website"], a[data-value="Сайт"], a[data-value="Веб-сайт"], ' +
+                        'a[aria-label*="website" i], a[aria-label*="сайт" i]'
+                    );
+                    const website = authEl ? (authEl.href || authEl.getAttribute('href') || '') : '';
+                    const phoneEl = document.querySelector('button[data-item-id^="phone:"], a[href^="tel:"]');
+                    let phone = '';
+                    if (phoneEl) {
+                        const dt = phoneEl.getAttribute('data-item-id') || '';
+                        if (dt.startsWith('phone:tel:')) {
+                            phone = dt.replace('phone:tel:', '');
+                        } else {
+                            phone = phoneEl.innerText || '';
+                        }
+                    }
+                    const addrEl = document.querySelector('button[data-item-id="address"]');
+                    const address = addrEl ? addrEl.innerText.trim() : '';
+                    return { website, phone: phone.trim(), address };
+                }''')
+                return info or {}
+        except Exception as ex:
+            logger.debug(f"Google Maps detail check error: {ex}")
+            return {}
+        finally:
+            if detail_page:
+                try:
+                    await detail_page.close()
+                except Exception:
+                    pass
 
     async def _parse_single_place(self, page: Page, city: str, query: str) -> Optional[Lead]:
         """Parses details when Google Maps redirects directly to a single business card."""

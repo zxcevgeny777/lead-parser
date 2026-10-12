@@ -80,7 +80,8 @@ MAP_AND_SEARCH_DOMAINS = {
 BOOKING_DOMAINS = {
     "yclients.com", "yclients.site", "dikidi.ru", "dikidi.net", "dikidi.online", "dikidi.app", "dikidi.me",
     "clients.site", "alteg.io", "altegio.com", "rubitime.ru", "gnom.guru", "bnovo.ru", "traveline.ru",
-    "mst.link",
+    "mst.link", "zocdoc.com", "nexhealth.info", "localmed.com", "vagaro.com", "fresha.com", "booksy.com",
+    "mindbodyonline.com", "calendly.com", "acuityscheduling.com", "opentable.com",
 }
 
 DIRECTORY_CATALOG_DOMAINS = {
@@ -93,6 +94,7 @@ DIRECTORY_CATALOG_DOMAINS = {
     "yp.ru", "vl.ru", "pulscen.ru", "pulscen.by", "tiu.ru", "blizko.ru", "blizko.by", "avito.ru",
     "allinform.ru", "infomesto.com", "checko.ru", "rusprofile.ru", "spark-interfax.ru", "list-org.com",
     "hh.ru", "superjob.ru", "rabota.ru", "rabota.by", "praca.by",
+    "yelp.com", "yellowpages.com", "bbb.org", "angi.com", "thumbtack.com", "tripadvisor.com",
 }
 
 
@@ -108,10 +110,17 @@ def unwrap_and_clean_url(raw_url: Optional[str]) -> Optional[str]:
         return None
 
     if not url.startswith(("http://", "https://")):
-        if "." in url and not url.startswith("/") and " " not in url:
+        if url.startswith("/"):
+            return None
+        if "." in url and " " not in url:
             url = "https://" + url
         else:
-            return None
+            m = re.search(r"((?:https?://)?[a-zA-Z0-9а-яА-ЯёЁ-]+\.[a-zA-Zа-яА-ЯёЁ]{2,}(?:/[^\s]*)?)", url)
+            if m:
+                extracted = m.group(1)
+                url = extracted if extracted.startswith(("http://", "https://")) else "https://" + extracted
+            else:
+                return None
 
     try:
         parsed = urlparse(url)
@@ -123,18 +132,29 @@ def unwrap_and_clean_url(raw_url: Optional[str]) -> Optional[str]:
     for p in ("text", "url", "q", "target", "dest", "link", "to", "r"):
         if p in qs and qs[p]:
             candidate = unquote(qs[p][0]).strip()
-            if candidate.startswith(("http://", "https://")):
+            if candidate.startswith(("http://", "https://")) or "." in candidate:
                 try:
-                    c_parsed = urlparse(candidate)
-                    c_netloc = c_parsed.netloc.lower()
-                    if not any(ign in c_netloc for ign in ("yandex.", "ya.ru", "ya.by", "google.", "2gis.", "apple.")):
-                        return unwrap_and_clean_url(candidate)
+                    c_clean = unwrap_and_clean_url(candidate)
+                    if c_clean:
+                        return c_clean
                 except Exception:
                     pass
+
+    # 1b. Check if path contains an embedded http(s) URL
+    unquoted_path = unquote(parsed.path or "")
+    if "http://" in unquoted_path or "https://" in unquoted_path:
+        idx = unquoted_path.find("http")
+        embedded = unquoted_path[idx:].strip()
+        c_clean = unwrap_and_clean_url(embedded)
+        if c_clean:
+            return c_clean
 
     netloc = parsed.netloc.lower()
     if netloc.startswith("www."):
         netloc = netloc[4:]
+
+    if not netloc or "." not in netloc:
+        return None
 
     # 2. Check search engine / map links (NOT business websites!)
     for map_domain in MAP_AND_SEARCH_DOMAINS:

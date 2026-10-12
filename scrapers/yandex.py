@@ -127,21 +127,24 @@ class YandexScraper(BaseScraper):
                             phones.append(fp)
 
                 # 4. Direct extraction of official website from Yandex business-urls block
-                official_site_el = await card_page.query_selector(
+                official_site_els = await card_page.query_selector_all(
                     'div.business-urls-view a, a.business-urls-view__link, [class*="business-urls"] a, [class*="website"] a'
                 )
-                if official_site_el:
+                for official_site_el in official_site_els:
                     site_href = await official_site_el.get_attribute("href")
                     cleaned_href = unwrap_and_clean_url(site_href)
                     if cleaned_href:
                         website = cleaned_href
-                    else:
-                        try:
-                            site_txt = (await official_site_el.inner_text()).strip()
-                            if site_txt and "." in site_txt and " " not in site_txt and not any(ign in site_txt.lower() for ign in ("yandex", "ya.ru", "google")):
-                                website = unwrap_and_clean_url(f"https://{site_txt}")
-                        except Exception:
-                            pass
+                        break
+                    try:
+                        site_txt = (await official_site_el.inner_text()).strip()
+                        if site_txt and "." in site_txt and not any(ign in site_txt.lower() for ign in ("yandex", "ya.ru", "ya.by", "google", "2gis", "маршрут", "такси")):
+                            cleaned_txt = unwrap_and_clean_url(site_txt)
+                            if cleaned_txt:
+                                website = cleaned_txt
+                                break
+                    except Exception:
+                        pass
 
                 # 5. Extract social media links and external links
                 external_links = await card_page.query_selector_all('a[href^="http"]')
@@ -172,6 +175,26 @@ class YandexScraper(BaseScraper):
                         socials["facebook"] = target_url
                     elif not website and clean_h:
                         website = clean_h
+
+                # 6. Fallback: Check SSR state JSON in HTML for "urls":["http..."] if React hasn't rendered links yet
+                if not website:
+                    try:
+                        raw_html = await card_page.content()
+                        urls_blocks = re.findall(r'"urls"\s*:\s*\[([^\]]+)\]', raw_html)
+                        for block in urls_blocks:
+                            for raw_u in re.findall(r'"(https?://[^"]+)"', block):
+                                clean_u = unwrap_and_clean_url(raw_u)
+                                if clean_u:
+                                    st, _ = classify_website(clean_u)
+                                    if st == WebsiteStatus.HAS_WEBSITE:
+                                        website = clean_u
+                                        break
+                                    elif not website:
+                                        website = clean_u
+                            if website:
+                                break
+                    except Exception:
+                        pass
 
             if website:
                 website = unwrap_and_clean_url(website)
@@ -314,11 +337,32 @@ class YandexScraper(BaseScraper):
                                 pass
 
                     # Website if already present on snippet
-                    site_el = await snip.query_selector('a[class*="business-url"], a[class*="link"], a[href^="http"]')
+                    site_els = await snip.query_selector_all('a[class*="business-url"], a[class*="link"], a[href^="http"]')
                     website = None
-                    if site_el:
+                    for site_el in site_els:
                         site_href = await site_el.get_attribute("href")
-                        website = unwrap_and_clean_url(site_href)
+                        cleaned = unwrap_and_clean_url(site_href)
+                        if not cleaned:
+                            try:
+                                stxt = (await site_el.inner_text()).strip()
+                                if stxt and "." in stxt and len(stxt) < 55 and not any(ign in stxt.lower() for ign in ("yandex", "ya.ru", "ya.by", "маршрут", "отзыв")):
+                                    cleaned = unwrap_and_clean_url(stxt)
+                            except Exception:
+                                pass
+                        if cleaned:
+                            st, _ = classify_website(cleaned)
+                            if st == WebsiteStatus.HAS_WEBSITE:
+                                website = cleaned
+                                break
+                            elif not website:
+                                website = cleaned
+
+                    if website:
+                        snip_status, _ = classify_website(website)
+                        if (filter_no_website_only or filter_type in ("hot_only", "hot_warm", "social_only")) and snip_status == WebsiteStatus.HAS_WEBSITE:
+                            continue
+                        if (filter_no_website_only or filter_type == "hot_only") and snip_status != WebsiteStatus.NO_WEBSITE:
+                            continue
 
                     # Phone if already present in snippet text
                     phones = []
