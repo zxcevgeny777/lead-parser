@@ -82,7 +82,7 @@ def _translit_simple(text: str) -> str:
 
 
 def generate_candidate_domains(company_name: str, city: str = "") -> List[str]:
-    """Generates most plausible domain candidates for a given business name."""
+    """Generates prioritized plausible domain candidates for a given business name."""
     cleaned = re.sub(
         r'(?i)\b(ооо|зао|пао|ип|салон|клиника|центр|студия|магазин|сервис|стоматология|автосервис)\b',
         '',
@@ -95,24 +95,35 @@ def generate_candidate_domains(company_name: str, city: str = "") -> List[str]:
     simple = _translit_simple(cleaned)
     city_simple = _translit_simple(city) if city else ""
 
-    candidates = set()
+    # Primary brand names
+    primary_brands = []
     if simple and len(simple) >= 3:
-        candidates.add(simple)
-        candidates.add(simple.replace('-', ''))
-        # Common brand handling: pizza -> dodo-pizza, dodopizza
+        primary_brands.append(simple)
+        no_dash = simple.replace('-', '')
+        if no_dash != simple:
+            primary_brands.append(no_dash)
+
+        # Common Latin transliteration alternates (e.g. ya -> ia, iy -> y, j -> zh)
+        if 'ya' in simple:
+            alt = simple.replace('ya', 'ia')
+            if alt not in primary_brands:
+                primary_brands.append(alt)
+        if 'iy' in simple:
+            alt = simple.replace('iy', 'y')
+            if alt not in primary_brands:
+                primary_brands.append(alt)
         if 'pitstsa' in simple:
-            candidates.add(simple.replace('pitstsa', 'pizza'))
-            candidates.add(simple.replace('pitstsa', 'pizza').replace('-', ''))
+            primary_brands.append(simple.replace('pitstsa', 'pizza'))
 
-        if city_simple:
-            candidates.add(f"{simple}-{city_simple}")
-            candidates.add(f"{simple.replace('-', '')}{city_simple}")
-
-    # Extract any explicit latin words in name (e.g. "Dodo Pizza", "BMW Service")
+    # Explicit latin words in company name (e.g. "Villa Gold", "Dodo Pizza")
     latin_words = re.findall(r'[a-zA-Z0-9]+', company_name.lower())
     if latin_words:
-        candidates.add("".join(latin_words))
-        candidates.add("-".join(latin_words))
+        w_joined = "".join(latin_words)
+        w_dashed = "-".join(latin_words)
+        if len(w_joined) >= 3 and w_joined not in primary_brands:
+            primary_brands.insert(0, w_joined)
+        if len(w_dashed) >= 3 and w_dashed not in primary_brands:
+            primary_brands.insert(0, w_dashed)
 
     city_lower = str(city).lower()
     is_by = any(w in city_lower for w in [
@@ -122,26 +133,47 @@ def generate_candidate_domains(company_name: str, city: str = "") -> List[str]:
     is_us_eu = any(w in city_lower for w in ["miami", "new york", "usa", "los angeles", "chicago", "london", "berlin", "warsaw"])
 
     if is_by:
-        tlds = ['.by', '.com', '.ru', '.online', '.бел', '.pro']
+        primary_tlds = ['.by', '.com', '.online', '.бел', '.ru']
     elif is_us_eu:
-        tlds = ['.com', '.net', '.org', '.io', '.co', '.us']
+        primary_tlds = ['.com', '.net', '.org', '.io', '.co', '.us']
     else:
-        tlds = ['.ru', '.by', '.com', '.online', '.pro', '.su']
+        primary_tlds = ['.ru', '.com', '.online', '.by', '.su']
 
-    domains = []
-    for c in candidates:
-        if 3 <= len(c) <= 35:
-            for tld in tlds:
-                domains.append(f"{c}{tld}")
+    ordered_domains = []
+    # 1. Pure brand root domains first (e.g. brand.by, brand.com)
+    for b in primary_brands:
+        for tld in primary_tlds:
+            dom = f"{b}{tld}"
+            if dom not in ordered_domains:
+                ordered_domains.append(dom)
 
-    return list(dict.fromkeys(domains))
+    # 2. City-suffixed domains second (e.g. brand-minsk.by, brandminsk.by)
+    if city_simple and len(city_simple) >= 3:
+        for b in primary_brands:
+            dom1 = f"{b}-{city_simple}{primary_tlds[0]}"
+            dom2 = f"{b.replace('-', '')}{city_simple}{primary_tlds[0]}"
+            if dom1 not in ordered_domains:
+                ordered_domains.append(dom1)
+            if dom2 not in ordered_domains:
+                ordered_domains.append(dom2)
+
+    return ordered_domains
 
 
 def check_domain_active_sync(domain: str) -> bool:
     """Checks if domain resolves via DNS and serves an active HTTP/HTTPS website."""
+    if not domain:
+        return False
+
+    # Handle IDNA punycode for Cyrillic domains like .бел / .рф
+    try:
+        ascii_domain = domain.encode("idna").decode("ascii")
+    except Exception:
+        ascii_domain = domain
+
     try:
         # Fast DNS pre-check (< 30ms)
-        socket.gethostbyname(domain)
+        socket.gethostbyname(ascii_domain)
     except Exception:
         return False
 
@@ -157,11 +189,11 @@ def check_domain_active_sync(domain: str) -> bool:
     # Verify HTTP/HTTPS response
     for proto in ("https", "http"):
         try:
-            url = f"{proto}://{domain}"
+            url = f"{proto}://{ascii_domain}"
             req = urllib.request.Request(
                 url,
                 headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 },
             )
@@ -187,11 +219,11 @@ def verify_company_website_sync(company_name: str, city: str = "") -> Tuple[bool
     if not clean_name or len(clean_name) < 2:
         return False, None
 
-    # 1. Candidate Domain Strategy (concurrent check for 8x speedup)
-    candidates = generate_candidate_domains(clean_name, city)[:10]
+    # 1. Candidate Domain Strategy (concurrent check across top 25 plausible domains)
+    candidates = generate_candidate_domains(clean_name, city)[:25]
     if candidates:
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        with ThreadPoolExecutor(max_workers=min(8, len(candidates))) as executor:
+        with ThreadPoolExecutor(max_workers=min(12, len(candidates))) as executor:
             future_to_domain = {executor.submit(check_domain_active_sync, d): d for d in candidates}
             for future in as_completed(future_to_domain):
                 try:

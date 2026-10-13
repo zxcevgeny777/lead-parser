@@ -111,10 +111,36 @@ def test_twogis_shortlink_falls_back_to_text_domain():
 
 
 def test_expanded_niches_catalog():
-    from core.niches import POPULAR_NICHES, QUICK_NICHES, QUICK_INTL_NICHES
+    from core.niches import POPULAR_NICHES, QUICK_NICHES, QUICK_INTL_NICHES, clean_map_query
 
     assert len(POPULAR_NICHES) >= 75
     assert len(QUICK_NICHES) >= 12
     assert len(QUICK_INTL_NICHES) >= 12
+
+    # Verify query cleaner simplifies compound niche strings for map search engines
+    assert clean_map_query("Монтаж септиков и канализации Минск") == "Септики Минск"
+    assert clean_map_query("Строительство каркасных домов Гомель") == "Каркасные дома Гомель"
+    assert clean_map_query("Выездной шиномонтаж 24/7 Минск") == "Выездной шиномонтаж Минск"
+
+
+def test_yandex_org_id_extraction_and_lead_strictness():
+    from scrapers.yandex import extract_yandex_org_id
+    from core.models import Lead, WebsiteStatus, LeadPriority
+
+    # Canonical and slugged Yandex map URLs
+    assert extract_yandex_org_id("https://yandex.ru/maps/org/1234567890/") == "1234567890"
+    assert extract_yandex_org_id("/maps/org/shinomontazh_24/9876543210/") == "9876543210"
+    assert extract_yandex_org_id("1122334455") == "1122334455"
+
+    # Lead strict classification invariant: lead with website cannot be NO_WEBSITE or HIGH priority
+    lead_with_site = Lead(
+        name="Компания с сайтом",
+        source="yandex",
+        website="https://stroyservis.by",
+        phones=["+375291234567"],
+    )
+    assert lead_with_site.website_status == WebsiteStatus.HAS_WEBSITE
+    assert lead_with_site.lead_priority == LeadPriority.LOW
+
 
 

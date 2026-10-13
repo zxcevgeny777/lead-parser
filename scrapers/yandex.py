@@ -27,6 +27,17 @@ IGNORABLE_DOMAINS = [
 ]
 
 
+def extract_yandex_org_id(url_or_href: str) -> Optional[str]:
+    """Extracts numeric Yandex organization ID from any map URL or snippet link."""
+    if not url_or_href:
+        return None
+    m = re.search(r"/org/(?:[^/]+/)?(\d+)", url_or_href)
+    if m:
+        return m.group(1)
+    m2 = re.search(r"\b(\d{8,14})\b", url_or_href)
+    return m2.group(1) if m2 else None
+
+
 class YandexScraper(BaseScraper):
     """Scraper for Yandex Maps organizations."""
 
@@ -42,6 +53,7 @@ class YandexScraper(BaseScraper):
         self.on_progress = on_progress
         self.leads: List[Lead] = []
         self._seen_urls = set()
+        self._seen_org_ids = set()
         self.skipped_checked_count: int = 0
 
     async def _scroll_results(self) -> bool:
@@ -63,170 +75,169 @@ class YandexScraper(BaseScraper):
         except Exception:
             return False
 
-    async def _enrich_card(self, sem: asyncio.Semaphore, item: Dict[str, Any], city: str) -> Optional[Lead]:
-        """Enriches organization card in a dedicated page with semaphore concurrency."""
-        if not self.context or not item.get("url"):
-            return None
-
-        card_page = None
-        phones = list(item.get("phones", []))
-        website = item.get("website")
-        socials = {}
-
+    async def _extract_from_page_state(self, city: str) -> List[Lead]:
+        """Extracts organizations directly from the embedded Yandex Maps Redux/React state in the page."""
+        if not self.page:
+            return []
         try:
-            async with sem:
-                card_page = await self.context.new_page()
-                card_page.set_default_timeout(14000)
+            state_json = await self.page.evaluate("""() => {
+                const scripts = Array.from(document.querySelectorAll('script'));
+                for (const s of scripts) {
+                    if (s.textContent && s.textContent.includes('"stack"') && s.textContent.includes('"results"')) {
+                        return s.textContent;
+                    }
+                }
+                return null;
+            }""")
+            if not state_json:
+                return []
+            import json
+            data = json.loads(state_json)
+            results = data.get("stack", [{}])[0].get("results", {})
+            items = results.get("items", [])
+            extracted = []
+            for it in items:
+                sub_items = it.get("items", [it])
+                for s_it in sub_items:
+                    raw_id = s_it.get("id")
+                    org_id = str(raw_id) if raw_id else None
+                    if not org_id:
+                        continue
+                    if org_id in self._seen_org_ids:
+                        continue
+                    self._seen_org_ids.add(org_id)
 
-                await card_page.goto(item["url"], wait_until="domcontentloaded")
-                try:
-                    await card_page.wait_for_selector(
-                        'h1, div.card-title-view, div.orgpage-header-view',
-                        timeout=2500,
-                    )
-                except Exception:
-                    pass
-                await asyncio.sleep(0.3)
+                    map_url = f"https://yandex.ru/maps/org/{org_id}/"
+                    self._seen_urls.add(map_url)
 
-                # 1. Look for phone reveal buttons
-                buttons = await card_page.query_selector_all('button, [role="button"], div[class*="phone"]')
-                for b in buttons:
-                    try:
-                        btxt = await b.inner_text()
-                        if "телефон" in btxt.lower() or "показать" in btxt.lower():
-                            for pat in PHONE_PATTERNS:
-                                for m in pat.findall(btxt):
-                                    fp, _, _ = parse_and_format_phone(m, city_hint=city)
-                                    if fp and fp not in phones:
-                                        phones.append(fp)
-                            await b.click(timeout=800)
-                            await asyncio.sleep(0.3)
-                            break
-                    except Exception:
-                        pass
+                    title = s_it.get("title", "").strip()
+                    if not title:
+                        continue
 
-                # 2. Extract direct tel: links (most reliable source)
-                tel_links = await card_page.query_selector_all('a[href^="tel:"]')
-                for t_el in tel_links:
-                    try:
-                        thref = await t_el.get_attribute("href")
-                        if thref:
-                            clean_tel = thref.replace("tel:", "").strip()
-                            fp, _, _ = parse_and_format_phone(clean_tel, city_hint=city)
+                    # Memory check
+                    if self.skip_checked:
+                        name_key = f"{title.strip().lower()}_{(city or 'Россия').strip().lower()}"
+                        if map_url in self._cached_memory["urls"] or name_key in self._cached_memory["name_city"]:
+                            self.skipped_checked_count += 1
+                            continue
+
+                    addr = s_it.get("fullAddress") or s_it.get("address") or city
+
+                    # Categories
+                    cats = [c.get("name") for c in s_it.get("categories", []) if c.get("name")]
+                    cat_str = ", ".join(cats)
+
+                    # Rating
+                    rating_d = s_it.get("ratingData", {})
+                    rating = rating_d.get("rating")
+                    reviews_count = rating_d.get("count")
+
+                    # Phones
+                    phones = []
+                    for p in s_it.get("phones", []) or []:
+                        raw_p = p.get("value") or p.get("number")
+                        if raw_p:
+                            fp, _, _ = parse_and_format_phone(raw_p, city_hint=city)
                             if fp and fp not in phones:
                                 phones.append(fp)
-                    except Exception:
-                        pass
 
-                # 3. Extract phone numbers from page text via universal regex
-                page_text = await card_page.inner_text("body")
-                for pat in PHONE_PATTERNS:
-                    for m in pat.findall(page_text):
-                        fp, _, _ = parse_and_format_phone(m, city_hint=city)
-                        if fp and fp not in phones:
-                            phones.append(fp)
-
-                # 4. Direct extraction of official website from Yandex business-urls block
-                official_site_els = await card_page.query_selector_all(
-                    'div.business-urls-view a, a.business-urls-view__link, [class*="business-urls"] a, [class*="website"] a'
-                )
-                for official_site_el in official_site_els:
-                    site_href = await official_site_el.get_attribute("href")
-                    cleaned_href = unwrap_and_clean_url(site_href)
-                    if cleaned_href:
-                        website = cleaned_href
-                        break
-                    try:
-                        site_txt = (await official_site_el.inner_text()).strip()
-                        if site_txt and "." in site_txt and not any(ign in site_txt.lower() for ign in ("yandex", "ya.ru", "ya.by", "google", "2gis", "маршрут", "такси")):
-                            cleaned_txt = unwrap_and_clean_url(site_txt)
-                            if cleaned_txt:
-                                website = cleaned_txt
+                    # Websites
+                    raw_urls = s_it.get("urls", []) or []
+                    website = None
+                    for u in raw_urls:
+                        clean_u = unwrap_and_clean_url(u)
+                        if clean_u:
+                            st, _ = classify_website(clean_u)
+                            if st == WebsiteStatus.HAS_WEBSITE:
+                                website = clean_u
                                 break
-                    except Exception:
-                        pass
+                            elif not website:
+                                website = clean_u
 
-                # 5. Extract social media links and external links
-                external_links = await card_page.query_selector_all('a[href^="http"]')
-                for el in external_links:
-                    href = await el.get_attribute("href")
-                    if not href:
-                        continue
-                    clean_h = unwrap_and_clean_url(href)
-                    target_url = clean_h or href
-                    h_lower = target_url.lower()
+                    # Social links
+                    socials = {}
+                    for soc in s_it.get("socialLinks", []) or []:
+                        stype = soc.get("type", "")
+                        shref = soc.get("href", "")
+                        if stype and shref:
+                            socials[stype] = shref
+                            if not website:
+                                website = shref
 
-                    if any(ign in h_lower for ign in ("maps/org", "clck/", "yandex.", "ya.ru", "ya.by", "google.", "2gis.")):
-                        continue
-
-                    if ("vk.com" in h_lower or "vk.ru" in h_lower):
-                        socials["vk"] = target_url
-                    elif ("t.me" in h_lower or "telegram.me" in h_lower):
-                        socials["telegram"] = target_url
-                    elif "wa.me" in h_lower or "whatsapp.com" in h_lower:
-                        socials["whatsapp"] = target_url
-                    elif "instagram.com" in h_lower:
-                        socials["instagram"] = target_url
-                    elif "ok.ru" in h_lower or "odnoklassniki.ru" in h_lower:
-                        socials["ok"] = target_url
-                    elif "viber.click" in h_lower or "viber.com" in h_lower:
-                        socials["viber"] = target_url
-                    elif "facebook.com" in h_lower or "fb.com" in h_lower:
-                        socials["facebook"] = target_url
-                    elif not website and clean_h:
-                        website = clean_h
-
-                # 6. Fallback: Check SSR state JSON in HTML for "urls":["http..."] if React hasn't rendered links yet
-                if not website:
-                    try:
-                        raw_html = await card_page.content()
-                        urls_blocks = re.findall(r'"urls"\s*:\s*\[([^\]]+)\]', raw_html)
-                        for block in urls_blocks:
-                            for raw_u in re.findall(r'"(https?://[^"]+)"', block):
-                                clean_u = unwrap_and_clean_url(raw_u)
-                                if clean_u:
-                                    st, _ = classify_website(clean_u)
-                                    if st == WebsiteStatus.HAS_WEBSITE:
-                                        website = clean_u
-                                        break
-                                    elif not website:
-                                        website = clean_u
-                            if website:
-                                break
-                    except Exception:
-                        pass
-
-            if website:
-                website = unwrap_and_clean_url(website)
-
+                    status, priority = classify_website(website)
+                    lead = Lead(
+                        id=map_url,
+                        name=title,
+                        source="Яндекс Карты",
+                        category=cat_str,
+                        city=city,
+                        address=addr,
+                        phones=phones,
+                        website=website,
+                        website_status=status,
+                        lead_priority=priority,
+                        social_links=socials,
+                        rating=rating,
+                        reviews_count=reviews_count,
+                        map_url=map_url,
+                    )
+                    extracted.append(lead)
+            return extracted
         except Exception as e:
-            logger.debug(f"[Yandex Maps] Error enriching card for {item.get('name')}: {e}")
-        finally:
-            if card_page:
+            logger.debug(f"[Yandex Maps] Error extracting state: {e}")
+            return []
+
+    async def _reveal_snippet_detail(self, snippet_el, city: str) -> Dict[str, Any]:
+        """Expands organization card inside the main page to reveal hidden phone/website without getting rate-limited."""
+        res = {"phones": [], "website": None, "socials": {}}
+        try:
+            await snippet_el.click(timeout=1500)
+            await asyncio.sleep(0.4)
+
+            # Check website links in sidebar
+            site_els = await self.page.query_selector_all(
+                'div.business-urls-view a, a.business-urls-view__link, [class*="business-urls"] a, [class*="website"] a'
+            )
+            for sel in site_els:
+                href = await sel.get_attribute("href")
+                cu = unwrap_and_clean_url(href)
+                if cu:
+                    st, _ = classify_website(cu)
+                    if st == WebsiteStatus.HAS_WEBSITE:
+                        res["website"] = cu
+                        break
+                    elif not res["website"]:
+                        res["website"] = cu
+
+            # Phone buttons
+            phone_btns = await self.page.query_selector_all('button, [role="button"], div[class*="phone"]')
+            for pb in phone_btns[:2]:
+                txt = (await pb.inner_text()).lower()
+                if "показать" in txt or "телефон" in txt:
+                    await pb.click(timeout=800)
+                    await asyncio.sleep(0.3)
+                    break
+
+            # Tel links
+            tels = await self.page.query_selector_all('a[href^="tel:"]')
+            for t in tels:
+                thref = await t.get_attribute("href")
+                if thref:
+                    fp, _, _ = parse_and_format_phone(thref.replace("tel:", ""), city_hint=city)
+                    if fp and fp not in res["phones"]:
+                        res["phones"].append(fp)
+
+            # Navigate back to results list if back button exists
+            back_btn = await self.page.query_selector('button[aria-label="Назад"], div[class*="back-button"], button[class*="close-button"]')
+            if back_btn:
                 try:
-                    await card_page.close()
+                    await back_btn.click(timeout=600)
+                    await asyncio.sleep(0.15)
                 except Exception:
                     pass
-
-        status, priority = classify_website(website)
-
-        lead = Lead(
-            id=item["url"],
-            name=item["name"],
-            source="Яндекс Карты",
-            category=item["category"],
-            city=city,
-            address=item["address"],
-            phones=phones,
-            website=website,
-            website_status=status,
-            lead_priority=priority,
-            social_links=socials,
-            rating=item["rating"],
-            reviews_count=item["reviews_count"],
-            map_url=item["url"],
-        )
-        return lead
+        except Exception:
+            pass
+        return res
 
     async def search(
         self,
@@ -238,19 +249,20 @@ class YandexScraper(BaseScraper):
         filter_type: str = "hot_warm",
         skip_checked: bool = True,
     ) -> List[Lead]:
-        """Searches Yandex Maps for leads matching the query and city."""
+        """Searches Yandex Maps for leads matching the query and city, scrolling until limit is met."""
         self.leads = []
         self._seen_urls = set()
         self.skipped_checked_count = 0
+        self.skip_checked = skip_checked
 
         # Preload remembered organizations for instant O(1) in-memory deduplication
-        cached_memory = (
+        self._cached_memory = (
             memory_db.load_cached_lookups()
             if skip_checked
             else {"urls": set(), "phones": set(), "name_city": set()}
         )
-        if skip_checked and cached_memory["urls"]:
-            logger.info(f"[Yandex Maps] Loaded {len(cached_memory['urls'])} remembered places from memory.")
+        if skip_checked and self._cached_memory["urls"]:
+            logger.info(f"[Yandex Maps] Loaded {len(self._cached_memory['urls'])} remembered places from memory.")
 
         full_query = f"{query} {city}".strip() if city else query.strip()
         encoded_query = urllib.parse.quote(full_query)
@@ -259,15 +271,14 @@ class YandexScraper(BaseScraper):
         await self.start()
         logger.info(f"[Yandex Maps] Navigating to {target_url}")
 
-        # Calculate optimal candidate pool size
-        if filter_no_website_only or filter_type == "hot_only":
-            raw_target = min(max(limit * 3, 30), 120)
-        elif filter_type in ("hot_warm", "social_only"):
-            raw_target = min(max(limit * 2, 25), 100)
-        else:
-            raw_target = min(limit, 80)
-
-        raw_items: List[Dict[str, Any]] = []
+        def is_qualifying(lead: Lead) -> bool:
+            if filter_no_website_only or filter_type == "hot_only":
+                return lead.lead_priority == LeadPriority.HIGH and (not lead.website or lead.website_status == WebsiteStatus.NO_WEBSITE)
+            elif filter_type == "social_only":
+                return lead.lead_priority == LeadPriority.MEDIUM
+            elif filter_type == "hot_warm":
+                return lead.lead_priority in (LeadPriority.HIGH, LeadPriority.MEDIUM) and lead.website_status != WebsiteStatus.HAS_WEBSITE
+            return True
 
         try:
             await self.page.goto(target_url, wait_until="domcontentloaded", timeout=self.timeout)
@@ -277,14 +288,31 @@ class YandexScraper(BaseScraper):
                 pass
 
             scroll_attempts = 0
-            max_scrolls = 30
+            max_scrolls = max(25, limit * 2)
             unchanged_scrolls = 0
-            last_count = 0
+            last_leads_count = 0
 
-            while len(raw_items) < raw_target and scroll_attempts < max_scrolls:
+            while len(self.leads) < limit and scroll_attempts < max_scrolls:
+                # 1. State-level extraction (100% accurate, uncorrupted by WAF rate limits)
+                state_leads = await self._extract_from_page_state(city=city or "Россия")
+                for s_lead in state_leads:
+                    if is_qualifying(s_lead):
+                        if s_lead not in self.leads:
+                            self.leads.append(s_lead)
+                            if self.on_lead_found:
+                                self.on_lead_found(s_lead)
+                            if len(self.leads) >= limit:
+                                break
+
+                if len(self.leads) >= limit:
+                    break
+
+                # 2. DOM-level snippet extraction
                 snippets = await self.page.query_selector_all("li.search-snippet-view")
-
                 for snip in snippets:
+                    if len(self.leads) >= limit:
+                        break
+
                     org_link_el = await snip.query_selector('a[href*="/maps/org/"]')
                     if not org_link_el:
                         continue
@@ -295,29 +323,32 @@ class YandexScraper(BaseScraper):
                     href = await org_link_el.get_attribute("href")
                     if not href:
                         continue
-                    map_url = urllib.parse.urljoin("https://yandex.ru", href)
 
+                    org_id = extract_yandex_org_id(href)
+                    if org_id and org_id in self._seen_org_ids:
+                        # Already extracted from page state with full uncorrupted data
+                        continue
+                    if org_id:
+                        self._seen_org_ids.add(org_id)
+
+                    map_url = f"https://yandex.ru/maps/org/{org_id}/" if org_id else urllib.parse.urljoin("https://yandex.ru", href)
                     if map_url in self._seen_urls:
                         continue
                     self._seen_urls.add(map_url)
 
-                    # Check memory: skip previously checked places without opening their card!
+                    # Memory check
                     if skip_checked:
                         name_key = f"{name.strip().lower()}_{(city or 'Россия').strip().lower()}"
-                        if map_url in cached_memory["urls"] or name_key in cached_memory["name_city"]:
+                        if map_url in self._cached_memory["urls"] or name_key in self._cached_memory["name_city"]:
                             self.skipped_checked_count += 1
-                            logger.debug(f"[Yandex Maps] Skipping already checked place: {name}")
                             continue
 
-                    # Category
                     cat_el = await snip.query_selector('a[href*="/category/"]')
                     category = (await cat_el.inner_text()).strip() if cat_el else ""
 
-                    # Address
                     addr_el = await snip.query_selector('a[href*="/house/"], div[class*="address"]')
                     address = (await addr_el.inner_text()).strip() if addr_el else ""
 
-                    # Rating and reviews
                     rating = None
                     reviews_count = None
                     rev_el = await snip.query_selector('a[href*="/reviews/"]')
@@ -336,7 +367,7 @@ class YandexScraper(BaseScraper):
                             except ValueError:
                                 pass
 
-                    # Website if already present on snippet
+                    # Extract website from snippet links
                     site_els = await snip.query_selector_all('a[class*="business-url"], a[class*="link"], a[href^="http"]')
                     website = None
                     for site_el in site_els:
@@ -357,14 +388,6 @@ class YandexScraper(BaseScraper):
                             elif not website:
                                 website = cleaned
 
-                    if website:
-                        snip_status, _ = classify_website(website)
-                        if (filter_no_website_only or filter_type in ("hot_only", "hot_warm", "social_only")) and snip_status == WebsiteStatus.HAS_WEBSITE:
-                            continue
-                        if (filter_no_website_only or filter_type == "hot_only") and snip_status != WebsiteStatus.NO_WEBSITE:
-                            continue
-
-                    # Phone if already present in snippet text
                     phones = []
                     snip_text = await snip.inner_text()
                     for pat in PHONE_PATTERNS:
@@ -373,113 +396,79 @@ class YandexScraper(BaseScraper):
                             if fp and fp not in phones:
                                 phones.append(fp)
 
-                    raw_items.append({
-                        "name": name,
-                        "url": map_url,
-                        "category": category,
-                        "address": address,
-                        "phones": phones,
-                        "website": website,
-                        "rating": rating,
-                        "reviews_count": reviews_count,
-                    })
+                    # If no website found directly on the snippet, reveal organization card details
+                    if not website:
+                        detail = await self._reveal_snippet_detail(snip, city=city or "Россия")
+                        if detail.get("website"):
+                            website = detail["website"]
+                        if detail.get("phones"):
+                            for p in detail["phones"]:
+                                if p not in phones:
+                                    phones.append(p)
 
-                if len(raw_items) >= raw_target:
-                    break
+                    status, priority = classify_website(website)
+                    lead = Lead(
+                        id=map_url,
+                        name=name,
+                        source="Яндекс Карты",
+                        category=category,
+                        city=city or "Россия",
+                        address=address,
+                        phones=phones,
+                        website=website,
+                        website_status=status,
+                        lead_priority=priority,
+                        rating=rating,
+                        reviews_count=reviews_count,
+                        map_url=map_url,
+                    )
 
-                # Scroll down results panel
-                await self._scroll_results()
-                # Fast micro-poll for DOM snippets rendering
-                prev_snip_len = len(snippets)
-                for _ in range(4):
-                    await asyncio.sleep(0.15)
-                    curr_snips = await self.page.query_selector_all("li.search-snippet-view")
-                    if len(curr_snips) > prev_snip_len:
-                        break
-
-                if len(raw_items) == last_count:
-                    unchanged_scrolls += 1
-                else:
-                    unchanged_scrolls = 0
-                    last_count = len(raw_items)
-
-                if unchanged_scrolls >= 4:
-                    logger.info("[Yandex Maps] Reached end of search results.")
-                    break
-
-                if self.on_progress and len(raw_items) > 0:
-                    self.on_progress(f"Поиск компаний на карте ({len(raw_items)} найдено)...")
-
-                scroll_attempts += 1
-
-            logger.info(f"[Yandex Maps] Snippets collected: {len(raw_items)}. Enriching contacts...")
-
-            # Filter helper function
-            def is_qualifying(lead: Lead) -> bool:
-                if filter_no_website_only or filter_type == "hot_only":
-                    return lead.lead_priority == LeadPriority.HIGH and (not lead.website or lead.website_status == WebsiteStatus.NO_WEBSITE)
-                elif filter_type == "social_only":
-                    return lead.lead_priority == LeadPriority.MEDIUM
-                elif filter_type == "hot_warm":
-                    return lead.lead_priority in (LeadPriority.HIGH, LeadPriority.MEDIUM) and lead.website_status != WebsiteStatus.HAS_WEBSITE
-                return True
-
-            # Parallel card enrichment with Semaphore(3)
-            sem = asyncio.Semaphore(3)
-            chunk_size = 9
-
-            for i in range(0, len(raw_items), chunk_size):
-                if len(self.leads) >= limit:
-                    break
-
-                chunk = raw_items[i:i + chunk_size]
-                if self.on_progress:
-                    self.on_progress(f"Проверка сайтов и контактов ({min(i + len(chunk), len(raw_items))}/{len(raw_items)})...")
-                if enrich_contacts:
-                    tasks = [self._enrich_card(sem, it, city=city or "Россия") for it in chunk]
-                    enriched_leads = await asyncio.gather(*tasks)
-                else:
-                    enriched_leads = []
-                    for it in chunk:
-                        status, priority = classify_website(it["website"])
-                        enriched_leads.append(Lead(
-                            id=it["url"],
-                            name=it["name"],
-                            source="Яндекс Карты",
-                            category=it["category"],
-                            city=city or "Россия",
-                            address=it["address"],
-                            phones=it["phones"],
-                            website=it["website"],
-                            website_status=status,
-                            lead_priority=priority,
-                            rating=it["rating"],
-                            reviews_count=it["reviews_count"],
-                            map_url=it["url"],
-                        ))
-
-                valid_batch = [l for l in enriched_leads if l]
-                if valid_batch:
-                    memory_db.save_leads(valid_batch)
-
-                for lead in enriched_leads:
-                    if not lead:
-                        continue
                     if is_qualifying(lead):
                         if lead not in self.leads:
                             self.leads.append(lead)
                             if self.on_lead_found:
                                 self.on_lead_found(lead)
-                            if len(self.leads) >= limit:
-                                break
+
+                if len(self.leads) >= limit:
+                    break
+
+                # Scroll down results panel
+                await self._scroll_results()
+
+                # Micro-poll for DOM snippets rendering
+                prev_snip_len = len(snippets)
+                for _ in range(5):
+                    await asyncio.sleep(0.2)
+                    curr_snips = await self.page.query_selector_all("li.search-snippet-view")
+                    if len(curr_snips) > prev_snip_len:
+                        break
+
+                if len(self.leads) == last_leads_count:
+                    unchanged_scrolls += 1
+                else:
+                    unchanged_scrolls = 0
+                    last_leads_count = len(self.leads)
+
+                if unchanged_scrolls >= 5:
+                    logger.info("[Yandex Maps] Reached end of search results.")
+                    break
+
+                if self.on_progress:
+                    self.on_progress(f"Яндекс Карты ({city}): собрано {len(self.leads)}/{limit} лидов...")
+
+                scroll_attempts += 1
 
         except Exception as e:
             logger.error(f"[Yandex Maps] Search error: {e}")
         finally:
             await self.close()
 
+        if self.leads:
+            memory_db.save_leads(self.leads)
+
         logger.info(
             f"[Yandex Maps] Finished. Extracted {len(self.leads)} leads. "
             f"Skipped {self.skipped_checked_count} previously checked places."
         )
         return self.leads[:limit]
+

@@ -108,14 +108,12 @@ class BaseScraper:
         self.page = await self.context.new_page()
         self.page.set_default_timeout(self.timeout)
 
-        # Block ad trackers, telemetry, and heavy media assets for 3-5x faster scraping
+        # Block third-party ad trackers, non-essential telemetry, and heavy media assets
         AD_TRACKER_DOMAINS = frozenset({
             "uuidksinc.net",
             "doubleclick.net",
             "google-analytics.com",
             "googletagmanager.com",
-            "mc.yandex.ru",
-            "an.yandex.ru",
             "top-fwz1.mail.ru",
             "adriver.ru",
             "tns-counter.ru",

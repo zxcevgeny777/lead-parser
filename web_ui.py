@@ -25,7 +25,8 @@ from core.models import (
 from core.exporter import export_to_excel, export_to_csv, export_freelance_to_excel, export_freelance_to_csv
 from core.niches import (
     POPULAR_NICHES, QUICK_NICHES,
-    US_EU_HIGH_TICKET_NICHES, QUICK_INTL_NICHES, INTL_CITIES, BY_CITIES
+    US_EU_HIGH_TICKET_NICHES, QUICK_INTL_NICHES, INTL_CITIES, BY_CITIES,
+    clean_map_query
 )
 from core.memory import memory_db
 from core.web_verifier import verify_company_website, verify_company_website_sync
@@ -70,7 +71,145 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <title>LeadParser — Поиск клиентов и заказов</title>
     <style>
         /* ==================== MINIMALIST COLOR THEMES ==================== */
-        :root, [data-theme="obsidian"], [data-theme="dark"] {
+        :root, [data-theme="mono-dark"], [data-theme="dark"], [data-theme="graphite"] {
+            --bg: #000000;
+            --surface: #0a0a0a;
+            --surface-hover: #141414;
+            --surface-subtle: #101012;
+            --primary: #ffffff;
+            --primary-hover: #e4e4e7;
+            --primary-fg: #000000;
+            --accent-subtle: rgba(255, 255, 255, 0.08);
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --text: #f4f4f5;
+            --text-dim: #a1a1aa;
+            --text-muted: #71717a;
+            --border: #222225;
+            --border-hover: #35353a;
+            --input-bg: #050505;
+            --row-hover: rgba(255, 255, 255, 0.02);
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+            --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.8);
+        }
+
+        [data-theme="mono-light"], [data-theme="light"], [data-theme="paper"] {
+            --bg: #ffffff;
+            --surface: #fafafa;
+            --surface-hover: #f4f4f5;
+            --surface-subtle: #f4f4f5;
+            --primary: #09090b;
+            --primary-hover: #18181b;
+            --primary-fg: #ffffff;
+            --accent-subtle: rgba(0, 0, 0, 0.06);
+            --success: #059669;
+            --warning: #d97706;
+            --danger: #dc2626;
+            --text: #09090b;
+            --text-dim: #52525b;
+            --text-muted: #a1a1aa;
+            --border: #e4e4e7;
+            --border-hover: #d4d4d8;
+            --input-bg: #ffffff;
+            --row-hover: rgba(0, 0, 0, 0.015);
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+            --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.1);
+        }
+
+        [data-theme="slate"] {
+            --bg: #0b0f17;
+            --surface: #111827;
+            --surface-hover: #1e293b;
+            --surface-subtle: #162032;
+            --primary: #38bdf8;
+            --primary-hover: #0ea5e9;
+            --primary-fg: #082f49;
+            --accent-subtle: rgba(56, 189, 248, 0.12);
+            --success: #34d399;
+            --warning: #fbbf24;
+            --danger: #f87171;
+            --text: #f8fafc;
+            --text-dim: #94a3b8;
+            --text-muted: #64748b;
+            --border: #1e293b;
+            --border-hover: #334155;
+            --input-bg: #0b0f17;
+            --row-hover: rgba(56, 189, 248, 0.025);
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+            --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.7);
+        }
+
+        [data-theme="sand"] {
+            --bg: #f8f6f0;
+            --surface: #ffffff;
+            --surface-hover: #f1ede4;
+            --surface-subtle: #f4f0e8;
+            --primary: #78350f;
+            --primary-hover: #92400e;
+            --primary-fg: #ffffff;
+            --accent-subtle: rgba(120, 53, 15, 0.08);
+            --success: #047857;
+            --warning: #b45309;
+            --danger: #b91c1c;
+            --text: #1c1917;
+            --text-dim: #57534e;
+            --text-muted: #a8a29e;
+            --border: #e6e0d4;
+            --border-hover: #d5cebf;
+            --input-bg: #ffffff;
+            --row-hover: rgba(28, 25, 23, 0.02);
+            --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.04);
+            --shadow-lg: 0 16px 36px -8px rgba(28, 25, 23, 0.12);
+        }
+
+        [data-theme="nordic"], [data-theme="nord"], [data-theme="tokyo"] {
+            --bg: #0d1117;
+            --surface: #161b22;
+            --surface-hover: #21262d;
+            --surface-subtle: #1c2128;
+            --primary: #58a6ff;
+            --primary-hover: #388bfd;
+            --primary-fg: #0d1117;
+            --accent-subtle: rgba(88, 166, 255, 0.12);
+            --success: #3fb950;
+            --warning: #d29922;
+            --danger: #f85149;
+            --text: #e6edf3;
+            --text-dim: #8b949e;
+            --text-muted: #6e7681;
+            --border: #30363d;
+            --border-hover: #484f58;
+            --input-bg: #0d1117;
+            --row-hover: rgba(88, 166, 255, 0.025);
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+            --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.7);
+        }
+
+        [data-theme="forest"], [data-theme="emerald"] {
+            --bg: #070e0a;
+            --surface: #0d1712;
+            --surface-hover: #15241d;
+            --surface-subtle: #101d16;
+            --primary: #10b981;
+            --primary-hover: #059669;
+            --primary-fg: #022c22;
+            --accent-subtle: rgba(16, 185, 129, 0.12);
+            --success: #34d399;
+            --warning: #fbbf24;
+            --danger: #f87171;
+            --text: #ecfdf5;
+            --text-dim: #86efac;
+            --text-muted: #4ade80;
+            --border: #182e22;
+            --border-hover: #264a37;
+            --input-bg: #070e0a;
+            --row-hover: rgba(16, 185, 129, 0.025);
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+            --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.75);
+        }
+
+        [data-theme="obsidian"] {
             --bg: #09090b;
             --surface: #121215;
             --surface-hover: #1c1c21;
@@ -93,140 +232,25 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.7);
         }
 
-        [data-theme="paper"], [data-theme="light"] {
-            --bg: #fafafa;
-            --surface: #ffffff;
-            --surface-hover: #f4f4f5;
-            --surface-subtle: #f4f4f5;
-            --primary: #18181b;
-            --primary-hover: #27272a;
-            --primary-fg: #ffffff;
-            --accent-subtle: rgba(24, 24, 27, 0.07);
-            --success: #059669;
-            --warning: #d97706;
-            --danger: #dc2626;
-            --text: #09090b;
-            --text-dim: #52525b;
-            --text-muted: #a1a1aa;
-            --border: #e4e4e7;
-            --border-hover: #d4d4d8;
-            --input-bg: #ffffff;
-            --row-hover: rgba(0, 0, 0, 0.02);
-            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-            --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.12);
-        }
-
-        [data-theme="sand"] {
-            --bg: #f6f4ef;
-            --surface: #fcfbf8;
-            --surface-hover: #f0ece1;
-            --surface-subtle: #efeae0;
-            --primary: #b45309;
-            --primary-hover: #92400e;
-            --primary-fg: #ffffff;
-            --accent-subtle: rgba(180, 83, 9, 0.1);
-            --success: #047857;
-            --warning: #b45309;
-            --danger: #b91c1c;
-            --text: #1c1917;
-            --text-dim: #57534e;
-            --text-muted: #a8a29e;
-            --border: #e5e0d5;
-            --border-hover: #d6cfc2;
-            --input-bg: #ffffff;
-            --row-hover: rgba(28, 25, 23, 0.025);
-            --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.05);
-            --shadow-lg: 0 16px 36px -8px rgba(28, 25, 23, 0.14);
-        }
-
-        [data-theme="nord"], [data-theme="midnight"] {
-            --bg: #0c1117;
-            --surface: #131a24;
-            --surface-hover: #1c2635;
-            --surface-subtle: #17202c;
-            --primary: #38bdf8;
-            --primary-hover: #0ea5e9;
-            --primary-fg: #082f49;
-            --accent-subtle: rgba(56, 189, 248, 0.12);
-            --success: #34d399;
-            --warning: #fbbf24;
-            --danger: #f87171;
-            --text: #f1f5f9;
-            --text-dim: #94a3b8;
-            --text-muted: #64748b;
-            --border: #1e293b;
-            --border-hover: #334155;
-            --input-bg: #0c1117;
-            --row-hover: rgba(56, 189, 248, 0.03);
-            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
-            --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.7);
-        }
-
-        [data-theme="graphite"] {
-            --bg: #101010;
-            --surface: #171717;
-            --surface-hover: #222222;
-            --surface-subtle: #1c1c1c;
-            --primary: #e5e5e5;
-            --primary-hover: #ffffff;
-            --primary-fg: #0a0a0a;
-            --accent-subtle: rgba(255, 255, 255, 0.09);
-            --success: #22c55e;
-            --warning: #eab308;
+        [data-theme="amber-void"], [data-theme="cyberpunk"] {
+            --bg: #080808;
+            --surface: #121212;
+            --surface-hover: #1a1a1a;
+            --surface-subtle: #161616;
+            --primary: #f59e0b;
+            --primary-hover: #d97706;
+            --primary-fg: #1c1917;
+            --accent-subtle: rgba(245, 158, 11, 0.12);
+            --success: #10b981;
+            --warning: #f59e0b;
             --danger: #ef4444;
-            --text: #f5f5f5;
-            --text-dim: #a3a3a3;
-            --text-muted: #666666;
-            --border: #262626;
+            --text: #f5f5f4;
+            --text-dim: #a8a29e;
+            --text-muted: #78716c;
+            --border: #242424;
             --border-hover: #383838;
-            --input-bg: #101010;
-            --row-hover: rgba(255, 255, 255, 0.025);
-            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
-            --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.75);
-        }
-
-        [data-theme="tokyo"], [data-theme="cyberpunk"] {
-            --bg: #0f101a;
-            --surface: #161826;
-            --surface-hover: #1f2236;
-            --surface-subtle: #1a1c2e;
-            --primary: #7aa2f7;
-            --primary-hover: #5d8dee;
-            --primary-fg: #0d1117;
-            --accent-subtle: rgba(122, 162, 247, 0.14);
-            --success: #73daca;
-            --warning: #e0af68;
-            --danger: #f7768e;
-            --text: #c0caf5;
-            --text-dim: #7982a9;
-            --text-muted: #565f89;
-            --border: #24283b;
-            --border-hover: #3b4261;
-            --input-bg: #0f101a;
-            --row-hover: rgba(122, 162, 247, 0.03);
-            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
-            --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.75);
-        }
-
-        [data-theme="emerald"] {
-            --bg: #060d0a;
-            --surface: #0b1611;
-            --surface-hover: #12241c;
-            --surface-subtle: #0e1c16;
-            --primary: #10b981;
-            --primary-hover: #059669;
-            --primary-fg: #022c22;
-            --accent-subtle: rgba(16, 185, 129, 0.14);
-            --success: #34d399;
-            --warning: #fbbf24;
-            --danger: #f87171;
-            --text: #ecfdf5;
-            --text-dim: #6ee7b7;
-            --text-muted: #34d399;
-            --border: #142e23;
-            --border-hover: #1f4736;
-            --input-bg: #060d0a;
-            --row-hover: rgba(16, 185, 129, 0.035);
+            --input-bg: #080808;
+            --row-hover: rgba(245, 158, 11, 0.025);
             --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
             --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.75);
         }
@@ -848,23 +872,25 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             <div class="header-controls">
                 <!-- Quick Theme Swatches + Select -->
                 <div class="control-pill">
-                    <div class="theme-swatches" title="Быстрый выбор темы">
-                        <button type="button" class="theme-dot" style="background:#09090b;" onclick="setTheme('obsidian')" title="Obsidian Dark"></button>
-                        <button type="button" class="theme-dot" style="background:#ffffff;" onclick="setTheme('paper')" title="Pure Paper (Светлая)"></button>
-                        <button type="button" class="theme-dot" style="background:#e6dec8;" onclick="setTheme('sand')" title="Warm Sand (Теплая)"></button>
-                        <button type="button" class="theme-dot" style="background:#1e293b;" onclick="setTheme('nord')" title="Nordic Slate"></button>
-                        <button type="button" class="theme-dot" style="background:#262626;" onclick="setTheme('graphite')" title="Graphite Mono"></button>
-                        <button type="button" class="theme-dot" style="background:#24283b;" onclick="setTheme('tokyo')" title="Tokyo Night"></button>
-                        <button type="button" class="theme-dot" style="background:#064e3b;" onclick="setTheme('emerald')" title="Emerald Zen"></button>
+                    <div class="theme-swatches" title="Минималистичные темы оформления">
+                        <button type="button" class="theme-dot" data-t="mono-dark" style="background:#000000; border-color:#555;" onclick="setTheme('mono-dark')" title="Mono Dark (OLED)"></button>
+                        <button type="button" class="theme-dot" data-t="mono-light" style="background:#ffffff; border-color:#bbb;" onclick="setTheme('mono-light')" title="Mono Light (Studio)"></button>
+                        <button type="button" class="theme-dot" data-t="slate" style="background:#0b0f17; border-color:#38bdf8;" onclick="setTheme('slate')" title="Slate Minimal"></button>
+                        <button type="button" class="theme-dot" data-t="sand" style="background:#f8f6f0; border-color:#78350f;" onclick="setTheme('sand')" title="Warm Linen"></button>
+                        <button type="button" class="theme-dot" data-t="nordic" style="background:#0d1117; border-color:#58a6ff;" onclick="setTheme('nordic')" title="Nordic Clean"></button>
+                        <button type="button" class="theme-dot" data-t="forest" style="background:#070e0a; border-color:#10b981;" onclick="setTheme('forest')" title="Forest Zen"></button>
+                        <button type="button" class="theme-dot" data-t="obsidian" style="background:#09090b; border-color:#6366f1;" onclick="setTheme('obsidian')" title="Obsidian Violet"></button>
+                        <button type="button" class="theme-dot" data-t="amber-void" style="background:#080808; border-color:#f59e0b;" onclick="setTheme('amber-void')" title="Amber Void"></button>
                     </div>
                     <select id="themeSelect" onchange="setTheme(this.value)" style="width: auto; padding: 2px 6px; font-size: 12px; border: none; background: transparent; cursor: pointer; color: var(--text);">
-                        <option value="obsidian">Obsidian Dark</option>
-                        <option value="paper">Pure Paper (Light)</option>
-                        <option value="sand">Warm Sand</option>
-                        <option value="nord">Nordic Slate</option>
-                        <option value="graphite">Graphite Mono</option>
-                        <option value="tokyo">Tokyo Night</option>
-                        <option value="emerald">Emerald Zen</option>
+                        <option value="mono-dark">Mono Dark (OLED)</option>
+                        <option value="mono-light">Mono Light (Studio)</option>
+                        <option value="slate">Slate Minimal</option>
+                        <option value="sand">Warm Linen</option>
+                        <option value="nordic">Nordic Clean</option>
+                        <option value="forest">Forest Zen</option>
+                        <option value="obsidian">Obsidian Violet</option>
+                        <option value="amber-void">Amber Void</option>
                     </select>
                 </div>
 
@@ -1366,6 +1392,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             } catch (e) {}
             const sel = document.getElementById('themeSelect');
             if (sel) sel.value = theme;
+            document.querySelectorAll('.theme-dot').forEach(dot => {
+                dot.style.boxShadow = dot.getAttribute('data-t') === theme ? '0 0 0 2px var(--primary)' : 'none';
+            });
         }
 
         let currentRegion = 'us';
@@ -2154,6 +2183,23 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         function downloadFreelance(type) {
             window.location.href = `/api/freelance/download?type=${type}`;
         }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            try {
+                const savedTheme = localStorage.getItem('lead_theme') || 'mono-dark';
+                setTheme(savedTheme);
+                const savedTab = localStorage.getItem('lead_active_tab') || 'maps';
+                switchTab(savedTab);
+                const savedRegion = localStorage.getItem('lead_region') || 'cis';
+                setRegion(savedRegion);
+            } catch (e) {}
+            pollStatus();
+            pollFreelanceStatus();
+            fetch('/api/memory/stats').then(r => r.json()).then(d => {
+                const b = document.getElementById('memCountBadge');
+                if (b && d) b.innerText = d.total_leads || 0;
+            }).catch(() => {});
+        });
     </script>
 </body>
 </html>
@@ -2176,6 +2222,9 @@ async def run_search_task(
     CURRENT_STATE["total_target"] = limit
     CURRENT_STATE["skipped_count"] = 0
     CURRENT_STATE["progress_message"] = "Инициализация браузера..."
+
+    # Normalize compound marketing niche queries for map engines
+    map_query = clean_map_query(query)
 
     # Parse multi-city input: supports "Минск, Брест", "Miami, FL", "Miami, FL, Houston, TX"
     if ";" in city:
@@ -2212,21 +2261,6 @@ async def run_search_task(
             def on_lead(lead: Lead):
                 if CURRENT_STATE.get("cancel_requested"):
                     return
-                if verify_web and (not lead.website or lead.website_status in (WebsiteStatus.NO_WEBSITE, WebsiteStatus.TAPLINK)):
-                    try:
-                        has_site, detected_site = verify_company_website_sync(lead.name, lead.city)
-                        if has_site and detected_site:
-                            st, pr = classify_website(detected_site)
-                            if st != WebsiteStatus.NO_WEBSITE:
-                                lead.website = detected_site
-                                lead.website_status = st
-                                lead.lead_priority = pr
-                                lead.notes = f"🌐 Найден сайт в поиске: {detected_site}"
-                                memory_db.save_lead(lead)
-                        else:
-                            lead.notes = "✅ 100% подтверждено поиском: сайта в интернете нет"
-                    except Exception:
-                        pass
                 if not is_qualifying_lead(lead):
                     return
                 key = (lead.name.lower().strip(), lead.primary_phone)
@@ -2245,88 +2279,184 @@ async def run_search_task(
                 with STATE_LOCK:
                     CURRENT_STATE["progress_message"] = f"{prefix}{city_label}: {msg}"
 
-            # 1. Google Maps (USA / Europe / Worldwide)
-            if source in ("google", "all") and len(all_leads) < limit:
-                CURRENT_STATE["progress_message"] = f"{prefix}Поиск в Google Maps ({city_label})..."
-                gmaps_scraper = GoogleMapsScraper(headless=True, on_lead_found=on_lead, on_progress=on_progress)
-                try:
-                    gmaps_leads = await gmaps_scraper.search(
-                        query=query,
-                        city=current_city,
-                        limit=curr_limit,
-                        filter_type=filter_type,
-                        skip_checked=skip_checked,
-                        verify_web=False,
-                    )
-                    total_skipped += getattr(gmaps_scraper, "skipped_checked_count", 0)
-                    for l in gmaps_leads:
-                        if not is_qualifying_lead(l):
-                            continue
-                        key = (l.name.lower().strip(), l.primary_phone)
-                        if key not in seen:
-                            seen.add(key)
-                            if not l.ai_pitch:
-                                enrich_lead_with_pitch(l)
-                            all_leads.append(l)
-                            with STATE_LOCK:
-                                CURRENT_STATE["leads"].append(l.model_dump())
-                except Exception as e:
-                    print(f"[WebUI] Google Maps error for {current_city}: {e}")
+            city_lower = (current_city or "").lower()
+            is_cis_city = any(w in city_lower for w in [
+                "минск", "брест", "гродно", "витебск", "могилев", "гомель",
+                "москва", "санкт", "питер", "спб", "казань", "новосибирск",
+                "екатеринбург", "краснодар", "самара", "ростов", "сочи",
+                "алматы", "астана", "беларусь", "россия", "казахстан"
+            ]) or not any(w in city_lower for w in [
+                "miami", "new york", "los angeles", "houston", "dallas", "chicago",
+                "london", "berlin", "warsaw", "prague", "paris", "madrid", "rome"
+            ])
 
-            # 2. Yandex Maps
-            if source in ("yandex", "both", "all") and len(all_leads) < limit:
-                CURRENT_STATE["progress_message"] = f"{prefix}Поиск в Яндекс Картах ({city_label})..."
-                y_scraper = YandexScraper(headless=True, on_lead_found=on_lead, on_progress=on_progress)
-                try:
-                    y_leads = await y_scraper.search(
-                        query=query,
-                        city=current_city,
-                        limit=curr_limit,
-                        filter_type=filter_type,
-                        skip_checked=skip_checked,
-                    )
-                    total_skipped += getattr(y_scraper, "skipped_checked_count", 0)
-                    for l in y_leads:
-                        if not is_qualifying_lead(l):
-                            continue
-                        key = (l.name.lower().strip(), l.primary_phone)
-                        if key not in seen:
-                            seen.add(key)
-                            if not l.ai_pitch:
-                                enrich_lead_with_pitch(l)
-                            all_leads.append(l)
-                            with STATE_LOCK:
-                                CURRENT_STATE["leads"].append(l.model_dump())
-                except Exception as e:
-                    print(f"[WebUI] Yandex error for {current_city}: {e}")
+            # CIS preferred ordering: Yandex Maps -> 2GIS -> Google Maps
+            # International preferred ordering: Google Maps -> Yandex -> 2GIS
+            if is_cis_city:
+                # 1. Yandex Maps
+                if source in ("yandex", "both", "all") and len(all_leads) < limit:
+                    CURRENT_STATE["progress_message"] = f"{prefix}Поиск в Яндекс Картах ({city_label})..."
+                    y_scraper = YandexScraper(headless=True, on_lead_found=on_lead, on_progress=on_progress)
+                    try:
+                        y_leads = await y_scraper.search(
+                            query=map_query,
+                            city=current_city,
+                            limit=curr_limit,
+                            filter_type=filter_type,
+                            skip_checked=skip_checked,
+                        )
+                        total_skipped += getattr(y_scraper, "skipped_checked_count", 0)
+                        for l in y_leads:
+                            if not is_qualifying_lead(l):
+                                continue
+                            key = (l.name.lower().strip(), l.primary_phone)
+                            if key not in seen:
+                                seen.add(key)
+                                if not l.ai_pitch:
+                                    enrich_lead_with_pitch(l)
+                                all_leads.append(l)
+                                with STATE_LOCK:
+                                    CURRENT_STATE["leads"].append(l.model_dump())
+                    except Exception as e:
+                        print(f"[WebUI] Yandex error for {current_city}: {e}")
 
-            # 3. 2GIS
-            if source in ("2gis", "both", "all") and len(all_leads) < limit:
-                g_limit = curr_limit if source == "2gis" else max(10, curr_limit - len([l for l in all_leads if l.city == current_city]))
-                CURRENT_STATE["progress_message"] = f"{prefix}Поиск в 2ГИС ({city_label})..."
-                g_scraper = TwoGisScraper(headless=True, on_lead_found=on_lead, on_progress=on_progress)
-                try:
-                    g_leads = await g_scraper.search(
-                        query=query,
-                        city=current_city,
-                        limit=g_limit,
-                        filter_type=filter_type,
-                        skip_checked=skip_checked,
-                    )
-                    total_skipped += getattr(g_scraper, "skipped_checked_count", 0)
-                    for l in g_leads:
-                        if not is_qualifying_lead(l):
-                            continue
-                        key = (l.name.lower().strip(), l.primary_phone)
-                        if key not in seen:
-                            seen.add(key)
-                            if not l.ai_pitch:
-                                enrich_lead_with_pitch(l)
-                            all_leads.append(l)
-                            with STATE_LOCK:
-                                CURRENT_STATE["leads"].append(l.model_dump())
-                except Exception as e:
-                    print(f"[WebUI] 2GIS error for {current_city}: {e}")
+                # 2. 2GIS
+                if source in ("2gis", "both", "all") and len(all_leads) < limit:
+                    g_limit = curr_limit if source == "2gis" else max(10, curr_limit - len([l for l in all_leads if l.city == current_city]))
+                    CURRENT_STATE["progress_message"] = f"{prefix}Поиск в 2ГИС ({city_label})..."
+                    g_scraper = TwoGisScraper(headless=True, on_lead_found=on_lead, on_progress=on_progress)
+                    try:
+                        g_leads = await g_scraper.search(
+                            query=map_query,
+                            city=current_city,
+                            limit=g_limit,
+                            filter_type=filter_type,
+                            skip_checked=skip_checked,
+                        )
+                        total_skipped += getattr(g_scraper, "skipped_checked_count", 0)
+                        for l in g_leads:
+                            if not is_qualifying_lead(l):
+                                continue
+                            key = (l.name.lower().strip(), l.primary_phone)
+                            if key not in seen:
+                                seen.add(key)
+                                if not l.ai_pitch:
+                                    enrich_lead_with_pitch(l)
+                                all_leads.append(l)
+                                with STATE_LOCK:
+                                    CURRENT_STATE["leads"].append(l.model_dump())
+                    except Exception as e:
+                        print(f"[WebUI] 2GIS error for {current_city}: {e}")
+
+                # 3. Google Maps (fallback for CIS)
+                if source in ("google", "all") and len(all_leads) < limit:
+                    CURRENT_STATE["progress_message"] = f"{prefix}Поиск в Google Maps ({city_label})..."
+                    gmaps_scraper = GoogleMapsScraper(headless=True, on_lead_found=on_lead, on_progress=on_progress)
+                    try:
+                        gmaps_leads = await gmaps_scraper.search(
+                            query=map_query,
+                            city=current_city,
+                            limit=curr_limit,
+                            filter_type=filter_type,
+                            skip_checked=skip_checked,
+                            verify_web=False,
+                        )
+                        total_skipped += getattr(gmaps_scraper, "skipped_checked_count", 0)
+                        for l in gmaps_leads:
+                            if not is_qualifying_lead(l):
+                                continue
+                            key = (l.name.lower().strip(), l.primary_phone)
+                            if key not in seen:
+                                seen.add(key)
+                                if not l.ai_pitch:
+                                    enrich_lead_with_pitch(l)
+                                all_leads.append(l)
+                                with STATE_LOCK:
+                                    CURRENT_STATE["leads"].append(l.model_dump())
+                    except Exception as e:
+                        print(f"[WebUI] Google Maps error for {current_city}: {e}")
+
+            else:
+                # International / US / Europe: Google Maps first
+                if source in ("google", "all") and len(all_leads) < limit:
+                    CURRENT_STATE["progress_message"] = f"{prefix}Поиск в Google Maps ({city_label})..."
+                    gmaps_scraper = GoogleMapsScraper(headless=True, on_lead_found=on_lead, on_progress=on_progress)
+                    try:
+                        gmaps_leads = await gmaps_scraper.search(
+                            query=map_query,
+                            city=current_city,
+                            limit=curr_limit,
+                            filter_type=filter_type,
+                            skip_checked=skip_checked,
+                            verify_web=False,
+                        )
+                        total_skipped += getattr(gmaps_scraper, "skipped_checked_count", 0)
+                        for l in gmaps_leads:
+                            if not is_qualifying_lead(l):
+                                continue
+                            key = (l.name.lower().strip(), l.primary_phone)
+                            if key not in seen:
+                                seen.add(key)
+                                if not l.ai_pitch:
+                                    enrich_lead_with_pitch(l)
+                                all_leads.append(l)
+                                with STATE_LOCK:
+                                    CURRENT_STATE["leads"].append(l.model_dump())
+                    except Exception as e:
+                        print(f"[WebUI] Google Maps error for {current_city}: {e}")
+
+                if source in ("yandex", "both", "all") and len(all_leads) < limit:
+                    CURRENT_STATE["progress_message"] = f"{prefix}Поиск в Яндекс Картах ({city_label})..."
+                    y_scraper = YandexScraper(headless=True, on_lead_found=on_lead, on_progress=on_progress)
+                    try:
+                        y_leads = await y_scraper.search(
+                            query=map_query,
+                            city=current_city,
+                            limit=curr_limit,
+                            filter_type=filter_type,
+                            skip_checked=skip_checked,
+                        )
+                        total_skipped += getattr(y_scraper, "skipped_checked_count", 0)
+                        for l in y_leads:
+                            if not is_qualifying_lead(l):
+                                continue
+                            key = (l.name.lower().strip(), l.primary_phone)
+                            if key not in seen:
+                                seen.add(key)
+                                if not l.ai_pitch:
+                                    enrich_lead_with_pitch(l)
+                                all_leads.append(l)
+                                with STATE_LOCK:
+                                    CURRENT_STATE["leads"].append(l.model_dump())
+                    except Exception as e:
+                        print(f"[WebUI] Yandex error for {current_city}: {e}")
+
+                if source in ("2gis", "both", "all") and len(all_leads) < limit:
+                    g_limit = curr_limit if source == "2gis" else max(10, curr_limit - len([l for l in all_leads if l.city == current_city]))
+                    CURRENT_STATE["progress_message"] = f"{prefix}Поиск в 2ГИС ({city_label})..."
+                    g_scraper = TwoGisScraper(headless=True, on_lead_found=on_lead, on_progress=on_progress)
+                    try:
+                        g_leads = await g_scraper.search(
+                            query=map_query,
+                            city=current_city,
+                            limit=g_limit,
+                            filter_type=filter_type,
+                            skip_checked=skip_checked,
+                        )
+                        total_skipped += getattr(g_scraper, "skipped_checked_count", 0)
+                        for l in g_leads:
+                            if not is_qualifying_lead(l):
+                                continue
+                            key = (l.name.lower().strip(), l.primary_phone)
+                            if key not in seen:
+                                seen.add(key)
+                                if not l.ai_pitch:
+                                    enrich_lead_with_pitch(l)
+                                all_leads.append(l)
+                                with STATE_LOCK:
+                                    CURRENT_STATE["leads"].append(l.model_dump())
+                    except Exception as e:
+                        print(f"[WebUI] 2GIS error for {current_city}: {e}")
 
             # Fallback: if regional maps yielded 0 leads (cloud datacenter IP blocking), auto-fallback to Google Maps
             if len(all_leads) == 0 and source in ("both", "yandex", "2gis"):
@@ -2334,7 +2464,7 @@ async def run_search_task(
                 try:
                     fb_scraper = GoogleMapsScraper(headless=True, on_lead_found=on_lead, on_progress=on_progress)
                     fb_leads = await fb_scraper.search(
-                        query=query,
+                        query=map_query,
                         city=current_city,
                         limit=curr_limit,
                         filter_type=filter_type,
@@ -2357,9 +2487,10 @@ async def run_search_task(
 
         # Web Search Verification if requested by user
         if verify_web and all_leads:
-            CURRENT_STATE["progress_message"] = f"🌐 Проверка наличия сайтов в сети ({len(all_leads)} компаний)..."
-            for idx, lead in enumerate(all_leads, 1):
-                if not lead.website or lead.website_status in (WebsiteStatus.NO_WEBSITE, WebsiteStatus.TAPLINK):
+            check_candidates = [l for l in all_leads if not l.website or l.website_status in (WebsiteStatus.NO_WEBSITE, WebsiteStatus.TAPLINK)]
+            if check_candidates:
+                CURRENT_STATE["progress_message"] = f"🌐 Онлайн-верификация сайтов ({len(check_candidates)} компаний)..."
+                for idx, lead in enumerate(check_candidates, 1):
                     try:
                         has_site, detected_site = await verify_company_website(lead.name, lead.city)
                         if has_site and detected_site:
@@ -2369,12 +2500,13 @@ async def run_search_task(
                                 lead.website_status = status
                                 lead.lead_priority = priority
                                 lead.notes = f"🌐 Найден сайт в поиске: {detected_site}"
+                                memory_db.save_lead(lead)
                         else:
-                            lead.notes = "✅ 100% подтверждено поиском: сайта в интернете нет"
+                            lead.notes = "✅ Подтверждено: сайта в интернете нет"
                     except Exception:
                         pass
-                if idx % 5 == 0:
-                    CURRENT_STATE["progress_message"] = f"🌐 Проверено в сети: {idx}/{len(all_leads)} компаний..."
+                    if idx % 5 == 0 or idx == len(check_candidates):
+                        CURRENT_STATE["progress_message"] = f"🌐 Проверено в сети: {idx}/{len(check_candidates)} компаний..."
 
         # Express Website Audit & AI Pitch Enrichment
         if all_leads:

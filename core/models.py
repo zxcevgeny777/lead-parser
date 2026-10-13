@@ -347,12 +347,12 @@ class Lead(BaseModel):
         cleaned_site = unwrap_and_clean_url(self.website)
         object.__setattr__(self, "website", cleaned_site)
 
-        # Automatically classify website if not explicitly given
-        if "website_status" not in data or "lead_priority" not in data:
+        # Automatically classify website strictly
+        if cleaned_site:
             status, priority = classify_website(cleaned_site)
             object.__setattr__(self, "website_status", status)
             object.__setattr__(self, "lead_priority", priority)
-        elif not cleaned_site:
+        else:
             object.__setattr__(self, "website_status", WebsiteStatus.NO_WEBSITE)
             object.__setattr__(self, "lead_priority", LeadPriority.HIGH)
 
